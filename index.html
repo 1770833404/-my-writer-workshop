@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>起点写作工坊</title>
+<style>
+:root{--bg:#0f0d0a;--panel:#1c1610;--text:#d4be8c;--accent:#c0843a;--border:#3d2b18;--editor:#2c2218}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'PingFang SC',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
+.sidebar{width:200px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.sidebar h3{padding:16px 12px 10px;color:var(--accent);letter-spacing:0.1em}
+.chapter-list{flex:1;overflow-y:auto;padding:8px}
+.chapter-item{padding:10px 12px;margin-bottom:4px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;border:1px solid transparent}
+.chapter-item.active{border-color:var(--accent);background:#2a2018}
+.chapter-item button{background:none;border:none;color:#a05a3a;font-size:1.2rem}
+.add-btn{margin:10px;padding:10px;text-align:center;border:1px dashed var(--border);border-radius:8px;color:var(--accent)}
+.main{flex:1;display:flex;flex-direction:column;padding:16px;gap:12px;overflow-y:auto}
+.toolbar{display:flex;gap:10px}
+.toolbar button{background:var(--editor);border:1px solid var(--border);color:var(--text);padding:8px 16px;border-radius:20px}
+.title-input{background:transparent;border:none;border-bottom:2px solid var(--border);color:var(--accent);font-size:1.5rem;font-weight:bold;padding:8px 0;outline:none}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.field{flex:1;min-width:140px;display:flex;flex-direction:column;gap:4px}
+label{font-size:0.8rem;color:var(--accent)}
+select,input,textarea{background:var(--editor);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-size:0.9rem;outline:none}
+textarea{min-height:100px;resize:vertical}
+.editor-area{flex:1;min-height:200px;font-size:1rem;line-height:2;font-family:'KaiTi','STKaiti',serif}
+.btn-generate{background:var(--accent);color:white;border:none;padding:14px;border-radius:30px;font-size:1.1rem;font-weight:bold}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:100;display:none}
+.overlay.show{display:flex}
+.dialog{background:var(--panel);padding:24px;border-radius:14px;width:90%;max-width:400px;display:flex;flex-direction:column;gap:14px}
+.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#2f2416;color:#ffcf8a;padding:10px 24px;border-radius:30px;z-index:200;display:none}
+.toast.show{display:block}
+</style>
+</head>
+<body>
+<div class="sidebar">
+<h3>📚 章节</h3>
+<div class="chapter-list" id="chapterList"></div>
+<div class="add-btn" id="btnAddChapter">+ 新建章节</div>
+</div>
+<div class="main">
+<div class="toolbar">
+<button id="btnSettings">⚙️ API密钥</button>
+<button id="btnExport">📦 导出TXT</button>
+<span style="flex:1"></span>
+<span style="font-size:0.8rem;color:#8a7958"><span id="wordCount">0</span> 字</span>
+</div>
+<input class="title-input" id="chapterTitle" value="第1章" placeholder="章节标题">
+<div class="row">
+<div class="field">
+<label>🎭 模仿大神</label>
+<select id="authorSelect">
+<option value="chendong">辰东·九龙拉棺</option>
+<option value="tudou">天蚕土豆·斗破</option>
+<option value="fanqie">我吃西红柿·吞噬星空</option>
+<option value="fenghuo">烽火戏诸侯·雪中</option>
+<option value="maoni" selected>猫腻·将夜</option>
+<option value="laoying">老鹰吃小鸡·高武</option>
+<option value="default">通用起点大神</option>
+</select>
+</div>
+<div class="field">
+<label>📖 生成字数</label>
+<input type="number" id="wordTarget" value="500" min="200" max="2000" step="100">
+</div>
+</div>
+<div class="field">
+<label>📝 剧情提示</label>
+<textarea id="promptInput" placeholder="云墨在冷月下砸向枯槐，戒指发烫，残魂出现……"></textarea>
+</div>
+<button class="btn-generate" id="btnGenerate">✨ 生成正文</button>
+<textarea class="editor-area" id="chapterEditor" placeholder="生成的内容会追加到这里……"></textarea>
+</div>
+<div class="overlay" id="settingsOverlay">
+<div class="dialog">
+<h3 style="color:var(--accent)">⚙️ API 设置</h3>
+<label>API地址</label><input id="apiBaseUrl" placeholder="https://api.deepseek.com/v1">
+<label>API密钥</label><input type="password" id="apiKey" placeholder="sk-...">
+<label>模型名称</label><input id="modelName" placeholder="deepseek-chat">
+<div style="display:flex;gap:10px;justify-content:flex-end">
+<button onclick="document.getElementById('settingsOverlay').classList.remove('show')" style="background:transparent;border:1px solid var(--border);color:var(--text);padding:8px 16px;border-radius:20px">取消</button>
+<button id="btnSaveSettings" style="background:var(--accent);color:white;padding:8px 20px;border-radius:20px">保存</button>
+</div>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(()=>{
+const $=s=>document.querySelector(s);
+const editor=$('#chapterEditor'),wordCount=$('#wordCount'),toast=$('#toast');
+let api={baseUrl:'',apiKey:'',model:'deepseek-chat'};
+let novel={chapters:[],currentId:null};
+function load(){
+try{
+let c=localStorage.getItem('nc');if(c){api=JSON.parse(c);$('#apiBaseUrl').value=api.baseUrl;$('#apiKey').value=api.apiKey;$('#modelName').value=api.model}
+let d=localStorage.getItem('nd');if(d){novel=JSON.parse(d);if(!novel.chapters.length){novel.chapters=[{id:'1',title:'第1章',content:''}];novel.currentId='1'}}else{novel.chapters=[{id:'1',title:'第1章',content:''}];novel.currentId='1'}
+}catch(e){novel.chapters=[{id:'1',title:'第1章',content:''}];novel.currentId='1'}
+renderList();loadChapter();
+}
+function save(){localStorage.setItem('nd',JSON.stringify(novel));}
+function genId(){return Date.now()+Math.random().toString(36)}
+function renderList(){
+let h='';
+novel.chapters.forEach(ch=>h+=`<div class="chapter-item ${ch.id===novel.currentId?'active':''}" data-id="${ch.id}"><span>${ch.title}</span><button class="del">×</button></div>`);
+$('#chapterList').innerHTML=h;
+document.querySelectorAll('.chapter-item').forEach(el=>{el.onclick=e=>{if(e.target.tagName==='BUTTON')return;switchChapter(el.dataset.id)};el.querySelector('button').onclick=e=>{e.stopPropagation();deleteChapter(el.dataset.id)}});
+}
+function switchChapter(id){saveCurrent();novel.currentId=id;loadChapter();renderList();save();}
+function addChapter(){saveCurrent();let ch={id:genId(),title:'第'+(novel.chapters.length+1)+'章',content:''};novel.chapters.push(ch);novel.currentId=ch.id;loadChapter();renderList();save();}
+function deleteChapter(id){if(novel.chapters.length<2)return toastMsg('至少保留一章');let i=novel.chapters.findIndex(c=>c.id===id);if(!confirm('删除“'+novel.chapters[i].title+'”?'))return;novel.chapters.splice(i,1);if(novel.currentId===id)novel.currentId=novel.chapters[0].id;loadChapter();renderList();save();}
+function saveCurrent(){let ch=novel.chapters.find(c=>c.id===novel.currentId);if(ch){ch.content=editor.value;ch.title=$('#chapterTitle').value.trim()||ch.title;}}
+function loadChapter(){let ch=novel.chapters.find(c=>c.id===novel.currentId);if(ch){$('#chapterTitle').value=ch.title;editor.value=ch.content||''}updateWordCount();}
+function updateWordCount(){let t=editor.value.trim();let c=(t.match(/[\u4e00-\u9fff]/g)||[]).length;let w=(t.replace(/[\u4e00-\u9fff]/g,' ').match(/\b\w+\b/g)||[]).length;wordCount.textContent=c+w;}
+const styles={chendong:'模仿辰东风格：古朴大气，常用太古禁地、九龙拉棺等意象。',tudou:'模仿天蚕土豆风格：节奏快，退婚打脸。',fanqie:'模仿我吃西红柿风格：宇宙修炼体系严谨。',fenghuo:'模仿烽火戏诸侯风格：文笔诗化，江湖情义。',maoni:'模仿猫腻风格：细腻机锋，权谋人心。',laoying:'模仿老鹰吃小鸡风格：灵气复苏，升级极快。',default:'起点大神通用文风：废材逆袭、奇遇连连。'};
+$('#btnGenerate').onclick=async()=>{
+if(!api.baseUrl||!api.apiKey)return toastMsg('请先设置API密钥');
+let prompt=$('#promptInput').value.trim(),content=editor.value.trim();
+if(!prompt&&!content)return toastMsg('请输入剧情提示');
+let sys=styles[$('#authorSelect').value]+' 续写约'+$('#wordTarget').value+'字，直接输出正文。';
+$('#btnGenerate').textContent='⏳ 生成中...';
+try{
+let res=await fetch(api.baseUrl.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+api.apiKey},body:JSON.stringify({model:api.model,messages:[{role:'system',content:sys},{role:'user',content:prompt||'续写：\n'+content.slice(-200)}],temperature:0.9,max_tokens:Math.min($('#wordTarget').value*4,3000)})});
+let d=await res.json();if(!res.ok)throw new Error(d.error?.message||'请求失败');
+let gen=d.choices[0].message.content.trim();
+editor.value=content+(content?'\n\n':'')+gen;
+saveCurrent();save();updateWordCount();toastMsg('✅ 内容已追加');
+}catch(e){toastMsg('失败: '+e.message)}
+$('#btnGenerate').textContent='✨ 生成正文';
+};
+$('#btnAddChapter').onclick=addChapter;
+$('#btnSettings').onclick=()=>$('#settingsOverlay').classList.add('show');
+document.getElementById('settingsOverlay').onclick=e=>{if(e.target.id==='settingsOverlay')$('#settingsOverlay').classList.remove('show')};
+$('#btnSaveSettings').onclick=()=>{api.baseUrl=$('#apiBaseUrl').value.trim();api.apiKey=$('#apiKey').value.trim();api.model=$('#modelName').value.trim();localStorage.setItem('nc',JSON.stringify(api));$('#settingsOverlay').classList.remove('show');toastMsg('密钥已保存');};
+$('#btnExport').onclick=()=>{saveCurrent();save();let txt='';novel.chapters.forEach(c=>txt+='## '+c.title+'\n\n'+c.content+'\n\n');let b=new Blob(['\uFEFF'+txt],{type:'text/plain;charset=utf-8'});let a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='小说全集.txt';a.click();toastMsg('已导出');};
+editor.oninput=()=>{saveCurrent();save();updateWordCount();};
+$('#chapterTitle').oninput=()=>saveCurrent();
+function toastMsg(m){$('#toast').textContent=m;$('#toast').classList.add('show');setTimeout(()=>$('#toast').classList.remove('show'),2000);}
+load();
+})();
+</script>
+</body>
+</html>
