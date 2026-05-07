@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>网文创作中枢 · 8合1系统</title>
+  <style>
+    :root {
+      --bg: #0f0d0a;
+      --panel: #1c1610;
+      --text: #d4be8c;
+      --accent: #c0843a;
+      --accent2: #e6a34c;
+      --border: #3d2b18;
+      --editor: #2c2218;
+      --radius: 12px;
+      --font: 'PingFang SC', 'Noto Serif SC', 'KaiTi', sans-serif;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 260px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .sidebar h2 {
+      padding: 18px 14px 12px;
+      color: var(--accent2);
+      font-size: 1.2rem;
+      letter-spacing: 0.1em;
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .tab-btn {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text);
+      padding: 12px 16px;
+      margin-bottom: 2px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: 0.2s;
+      font-family: var(--font);
+    }
+    .tab-btn:hover, .tab-btn.active {
+      background: var(--editor);
+      border-color: var(--accent);
+      color: var(--accent2);
+    }
+    .main-area {
+      flex: 1;
+      padding: 20px 24px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .panel {
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .panel.active { display: flex; }
+    h3 {
+      color: var(--accent2);
+      font-size: 1.3rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+      letter-spacing: 0.05em;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    label {
+      font-size: 0.8rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    input, textarea, select {
+      background: var(--editor);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.9rem;
+      font-family: var(--font);
+      outline: none;
+    }
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      font-weight: bold;
+      align-self: flex-start;
+    }
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      border-radius: 14px;
+    }
+    .card {
+      background: var(--editor);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 10px;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--accent2);
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+    .tag {
+      background: var(--accent);
+      color: white;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 0.7rem;
+    }
+    .memory-box {
+      background: #1a1410;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      font-size: 0.85rem;
+      max-height: 180px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #2f2416;
+      color: #ffcf8a;
+      padding: 8px 20px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      z-index: 200;
+      opacity: 0;
+      transition: 0.3s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+    @media (max-width: 768px) {
+      .sidebar { width: 200px; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="sidebar">
+  <h2>📖 创作中枢</h2>
+  <div class="tab-list">
+    <button class="tab-btn active" data-tab="tab-dashboard">🏠 总控台</button>
+    <button class="tab-btn" data-tab="tab-characters">👤 人设库</button>
+    <button class="tab-btn" data-tab="tab-world">🌍 世界观</button>
+    <button class="tab-btn" data-tab="tab-outline">📋 三层大纲</button>
+    <button class="tab-btn" data-tab="tab-write">✍️ 写作</button>
+    <button class="tab-btn" data-tab="tab-memory">🧠 记忆系统</button>
+    <button class="tab-btn" data-tab="tab-check">🔍 逻辑校验</button>
+    <button class="tab-btn" data-tab="tab-style">🎨 风格定制</button>
+  </div>
+</div>
+
+<div class="main-area" id="mainArea">
+  <!-- 总控台 -->
+  <div class="panel active" id="tab-dashboard">
+    <h3>🏠 小说基础信息</h3>
+    <div class="grid-2">
+      <div class="field"><label>小说名称</label><input id="novelTitle" placeholder="未命名"></div>
+      <div class="field"><label>类型/流派</label><input id="novelGenre" placeholder="玄幻、仙侠、悬疑..."></div>
+    </div>
+    <div class="field"><label>世界观简介</label><textarea id="novelWorldIntro" placeholder="一句话描述你的世界..."></textarea></div>
+    <div class="grid-2">
+      <div class="field"><label>总卷数计划</label><input id="novelVolumes" type="number" value="5"></div>
+      <div class="field"><label>总章数预估</label><input id="novelChapters" type="number" value="300"></div>
+    </div>
+    <div class="field"><label>故事基调 / 读者定位</label><input id="novelTone" placeholder="热血爽文、暗黑压抑、轻松幽默..."></div>
+    <button class="btn" id="saveDashboard">💾 保存基础设定</button>
+  </div>
+
+  <!-- 人设库 -->
+  <div class="panel" id="tab-characters">
+    <h3>👤 人物人设数据库</h3>
+    <div id="charList"></div>
+    <button class="btn btn-sm" id="addCharBtn">+ 新建角色</button>
+    <div class="card" id="charEditor" style="display:none;">
+      <div class="grid-2">
+        <div class="field"><label>全名</label><input id="charName"></div>
+        <div class="field"><label>别名/称号</label><input id="charAlias"></div>
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>性别</label><input id="charGender"></div>
+        <div class="field"><label>年龄</label><input id="charAge"></div>
+      </div>
+      <div class="field"><label>外貌特征</label><input id="charAppearance"></div>
+      <div class="field"><label>性格</label><input id="charPersonality" placeholder="冷漠、热血、腹黑..."></div>
+      <div class="field"><label>修为/境界</label><input id="charRealm"></div>
+      <div class="field"><label>功法/技能</label><input id="charSkills"></div>
+      <div class="field"><label>口头禅</label><input id="charCatchphrase"></div>
+      <div class="field"><label>弱点/禁忌</label><input id="charWeakness"></div>
+      <div class="field"><label>关系网 (师徒/仇敌/恋人)</label><textarea id="charRelations"></textarea></div>
+      <div class="field"><label>人设锁定规则</label><textarea id="charLockRule" placeholder="禁止AI写的：例如不能软弱、不能背叛..."></textarea></div>
+      <button class="btn" id="saveCharBtn">保存角色</button>
+    </div>
+  </div>
+
+  <!-- 世界观 -->
+  <div class="panel" id="tab-world">
+    <h3>🌍 世界观规则引擎</h3>
+    <div class="field"><label>修炼体系 / 境界划分</label><textarea id="worldRealm" placeholder="炼气→筑基→金丹→元婴→化神..."></textarea></div>
+    <div class="field"><label>地域地图 / 势力分布</label><textarea id="worldMap"></textarea></div>
+    <div class="field"><label>世界铁律 (不可打破的规则)</label><textarea id="worldRules" placeholder="例如：不可复活死者、仙凡有别..."></textarea></div>
+    <div class="field"><label>历史时间线 / 重大事件</label><textarea id="worldTimeline"></textarea></div>
+    <button class="btn" id="saveWorldBtn">💾 保存世界观</button>
+  </div>
+
+  <!-- 三层大纲 -->
+  <div class="panel" id="tab-outline">
+    <h3>📋 三层大纲系统</h3>
+    <div class="field"><label>总纲 (全书主线 + 结局)</label><textarea id="outlineMaster" placeholder="主角从退婚开始，最终成为..."></textarea></div>
+    <div class="field"><label>卷纲 (当前卷剧情走向)</label><textarea id="outlineVolume" placeholder="第一卷：少年崛起于微末..."></textarea></div>
+    <div class="field"><label>章纲 (当前章节精准剧情节点)</label><textarea id="outlineChapter" placeholder="第1章：祠堂退婚，戒指觉醒..."></textarea></div>
+    <button class="btn" id="saveOutlineBtn">💾 保存大纲</button>
+  </div>
+
+  <!-- 写作区 -->
+<div class="panel" id="tab-write">
+  <h3>✍️ 章节自动写作引擎</h3>
+  <div class="field"><label>📡 API 地址</label><input id="apiUrl" placeholder="默认 DeepSeek: https://api.deepseek.com/v1"></div>
+  <div class="field"><label>🔑 API 密钥</label><input type="password" id="apiKey" placeholder="sk-..."></div>
+  <div class="field"><label>🧠 模型名称</label><input id="modelName" placeholder="deepseek-v4-pro / claude-sonnet-4-20250514"></div>
+  <hr style="border-color:var(--border)">
+  <div class="field"><label>当前写作章纲</label><textarea id="writeOutline" placeholder="自动读取章纲，可手动修改..."></textarea></div>
+  <div class="grid-2">
+    <div class="field"><label>目标字数</label><input id="writeWordTarget" type="number" value="2000"></div>
+    <div class="field"><label>冲突/钩子指令</label><input id="writeHook" placeholder="结尾留悬念，突出杀机"></div>
+  </div>
+  <div class="field"><label>前情摘要 (自动注入)</label><div class="memory-box" id="writeMemory">暂无前情数据</div></div>
+  <button class="btn" id="startWriteBtn">✨ AI 生成正文</button>
+  <div class="field"><label>生成结果</label><textarea id="writeResult" rows="12" placeholder="AI生成的内容将显示在这里..."></textarea></div>
+  <button class="btn btn-sm" id="acceptWriteBtn">✅ 采纳并存入记忆</button>
+</div>
+
+  <!-- 记忆系统 -->
+  <div class="panel" id="tab-memory">
+    <h3>🧠 长篇章记忆关联</h3>
+    <div class="field"><label>近10章摘要 (短期+中期记忆)</label><textarea id="memoryRecent" placeholder="第1章：退婚觉醒...&#10;第2章：初入宗门..."></textarea></div>
+    <div class="field"><label>伏笔/埋坑池 (长期记忆)</label><textarea id="memoryForeshadowing" placeholder="1. 戒指中的残魂身份未揭&#10;2. 二叔的背叛动机..."></textarea></div>
+    <button class="btn" id="saveMemoryBtn">💾 更新记忆库</button>
+  </div>
+
+  <!-- 逻辑校验 -->
+  <div class="panel" id="tab-check">
+    <h3>🔍 逻辑纠错与一致性校验</h3>
+    <button class="btn" id="runCheckBtn">🔎 执行自动检查</button>
+    <div class="memory-box" id="checkResult">点击按钮开始检查修为冲突、名字错误、战力崩坏...</div>
+  </div>
+
+  <!-- 风格定制 -->
+  <div class="panel" id="tab-style">
+    <h3>🎨 风格定制 & 仿写系统</h3>
+    <div class="field"><label>内置大神风格</label>
+      <select id="stylePreset">
+        <option value="chendong">辰东 · 九龙拉棺</option>
+        <option value="tudou">天蚕土豆 · 斗破</option>
+        <option value="ergen">耳根 · 仙逆</option>
+        <option value="guimi">诡秘之主 · 克苏鲁</option>
+        <option value="shuangwen">都市爽文</option>
+        <option value="custom">自定义</option>
+      </select>
+    </div>
+    <div class="field"><label>自定义语气</label><input id="styleTone" placeholder="冷峻、热血、压抑、幽默..."></div>
+    <div class="field"><label>句式节奏控制</label><input id="styleRhythm" placeholder="多用短句、章节末留悬念..."></div>
+    <button class="btn" id="saveStyleBtn">💾 保存风格设定</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+  (() => {
+    const $ = s => document.querySelector(s);
+    const toast = $('#toast');
+    let currentCharId = null;
+
+    function showToast(msg) {
+      toast.textContent = msg; toast.classList.add('show');
+      clearTimeout(window._t); window._t = setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+    function loadData(key, fallback='') {
+      try { return localStorage.getItem(key) || fallback; } catch(e) { return fallback; }
+    }
+    function saveData(key, value) {
+      try { localStorage.setItem(key, value); } catch(e) { showToast('存储空间不足！'); }
+    }
+
+    // 初始化加载所有保存的数据
+    ['novelTitle','novelGenre','novelWorldIntro','novelVolumes','novelChapters','novelTone',
+     'worldRealm','worldMap','worldRules','worldTimeline','outlineMaster','outlineVolume','outlineChapter',
+     'memoryRecent','memoryForeshadowing','styleTone','styleRhythm','apiUrl','apiKey','modelName'].forEach(id => {
+      const el = $('#'+id); if(el) el.value = loadData(id, el.value || '');
+    });
+    const stylePreset = $('#stylePreset'); if(stylePreset) stylePreset.value = loadData('stylePreset', 'chendong');
+
+    // Tab切换
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        const target = $('#' + btn.dataset.tab);
+        if(target) target.classList.add('active');
+        if(btn.dataset.tab === 'tab-write') {
+          $('#writeOutline').value = $('#outlineChapter').value || '';
+          $('#writeMemory').textContent = $('#memoryRecent').value || '暂无前情数据';
+        }
+      });
+    });
+
+    // 保存按钮
+    $('#saveDashboard').addEventListener('click', () => {
+      ['novelTitle','novelGenre','novelWorldIntro','novelVolumes','novelChapters','novelTone'].forEach(id => saveData(id, $('#'+id).value));
+      showToast('基础设定已保存');
+    });
+    $('#saveWorldBtn').addEventListener('click', () => {
+      ['worldRealm','worldMap','worldRules','worldTimeline'].forEach(id => saveData(id, $('#'+id).value));
+      showToast('世界观已保存');
+    });
+    $('#saveOutlineBtn').addEventListener('click', () => {
+      ['outlineMaster','outlineVolume','outlineChapter'].forEach(id => saveData(id, $('#'+id).value));
+      showToast('大纲已保存');
+    });
+    $('#saveMemoryBtn').addEventListener('click', () => {
+      ['memoryRecent','memoryForeshadowing'].forEach(id => saveData(id, $('#'+id).value));
+      showToast('记忆库已更新');
+    });
+    $('#saveStyleBtn').addEventListener('click', () => {
+      saveData('stylePreset', $('#stylePreset').value);
+      ['styleTone','styleRhythm'].forEach(id => saveData(id, $('#'+id).value));
+      showToast('风格设定已保存');
+    });
+
+    // 自动保存 API 信息
+    ['apiUrl', 'apiKey', 'modelName'].forEach(id => {
+      const el = $('#'+id); if(el) el.addEventListener('input', () => saveData(id, el.value));
+    });
+
+    // 人设管理
+    function loadCharacters() { try { return JSON.parse(localStorage.getItem('characters') || '[]'); } catch(e) { return []; } }
+    function saveCharacters(chars) { saveData('characters', JSON.stringify(chars)); }
+    function renderCharList() {
+      const chars = loadCharacters();
+      $('#charList').innerHTML = chars.map((c, i) => `
+        <div class="card"><div class="card-header"><span>${c.name || '未命名'} <span class="tag">${c.realm || '未知境界'}</span></span>
+        <div><button class="btn btn-sm edit-char" data-index="${i}">编辑</button>
+        <button class="btn btn-sm del-char" data-index="${i}">删除</button></div></div>
+        <div style="font-size:0.8rem;">${c.personality || ''} | ${c.catchphrase || ''} | 关系: ${c.relations || '暂无'}</div></div>
+      `).join('');
+      document.querySelectorAll('.edit-char').forEach(btn => btn.addEventListener('click', (e) => {
+        const chars = loadCharacters();
+        const ch = chars[parseInt(e.target.dataset.index)];
+        currentCharId = parseInt(e.target.dataset.index);
+        ['charName','charAlias','charGender','charAge','charAppearance','charPersonality','charRealm','charSkills','charCatchphrase','charWeakness','charRelations','charLockRule'].forEach(id => {
+          const el = $('#'+id); if(el) el.value = ch[id.replace('char','').toLowerCase()] || '';
+        });
+        $('#charEditor').style.display = 'block';
+      }));
+      document.querySelectorAll('.del-char').forEach(btn => btn.addEventListener('click', (e) => {
+        if(!confirm('删除此角色？')) return;
+        const chars = loadCharacters();
+        chars.splice(parseInt(e.target.dataset.index), 1);
+        saveCharacters(chars); renderCharList();
+      }));
+    }
+    $('#addCharBtn').addEventListener('click', () => {
+      currentCharId = null;
+      ['charName','charAlias','charGender','charAge','charAppearance','charPersonality','charRealm','charSkills','charCatchphrase','charWeakness','charRelations','charLockRule'].forEach(id => {
+        const el = $('#'+id); if(el) el.value = '';
+      });
+      $('#charEditor').style.display = 'block';
+    });
+    $('#saveCharBtn').addEventListener('click', () => {
+      const char = { name: $('#charName').value, alias: $('#charAlias').value, gender: $('#charGender').value, age: $('#charAge').value, appearance: $('#charAppearance').value, personality: $('#charPersonality').value, realm: $('#charRealm').value, skills: $('#charSkills').value, catchphrase: $('#charCatchphrase').value, weakness: $('#charWeakness').value, relations: $('#charRelations').value, lockrule: $('#charLockRule').value };
+      const chars = loadCharacters();
+      if(currentCharId !== null) chars[currentCharId] = char; else chars.push(char);
+      saveCharacters(chars); renderCharList();
+      $('#charEditor').style.display = 'none'; showToast('角色已保存');
+    });
+    renderCharList();
+
+    // 逻辑校验
+    $('#runCheckBtn').addEventListener('click', () => {
+      const chars = loadCharacters();
+      const realms = $('#worldRealm').value;
+      let issues = [];
+      if(chars.length < 2) issues.push('角色数量过少，建议至少创建主角与主要配角。');
+      if(!realms) issues.push('未设定境界体系。');
+      const realmList = realms.split(/[→\n,，、]/).map(s => s.trim()).filter(Boolean);
+      chars.forEach(c => { if(c.realm && realmList.length && !realmList.includes(c.realm)) issues.push(`角色[${c.name}]的境界"${c.realm}"不在设定的境界体系中。`); });
+      if(issues.length === 0) issues.push('✅ 未发现明显冲突，建议人工复核战力描写。');
+      $('#checkResult').textContent = issues.join('\n');
+    });
+
+    // 核心：AI 写作引擎（带防OOC/防AI味逻辑）
+    $('#startWriteBtn').addEventListener('click', async () => {
+      const apiUrl = $('#apiUrl').value.trim();
+      const apiKey = $('#apiKey').value.trim();
+      const model = $('#modelName').value.trim();
+      if(!apiUrl || !apiKey || !model) { showToast('请先填写 API 地址、密钥和模型名称'); return; }
+
+      const outline = $('#writeOutline').value.trim();
+      const memory = $('#writeMemory').textContent.trim();
+      const chars = loadCharacters();
+      const worldRealm = $('#worldRealm').value;
+      const stylePresetVal = $('#stylePreset').value;
+      const styleTone = $('#styleTone').value;
+      const styleRhythm = $('#styleRhythm').value;
+      const wordTarget = $('#writeWordTarget').value;
+      const hook = $('#writeHook').value;
+
+      if(!outline && !memory) { showToast('请先填写章纲或前情摘要'); return; }
+
+      // 风格映射
+      const styleMap = {
+        chendong: '模仿辰东《遮天》的文风：古朴大气，常以太古禁地、九龙拉棺等意象营造神秘感，多用短句和留白。',
+        tudou: '模仿天蚕土豆《斗破苍穹》的文风：节奏极快，退婚打脸，爽点密集，语言直白热血。',
+        ergen: '模仿耳根《仙逆》的文风：杀气凌厉，主角坚毅果断，情感渲染强烈，语句节奏紧张。',
+        guimi: '模仿《诡秘之主》的文风：克苏鲁式压抑与悬疑，细节丰富，逻辑严谨，角色心理活动刻画深刻。',
+        shuangwen: '采用都市爽文风格：节奏明快，打脸逆袭不断，对话生动接地气，爽感密集。',
+        custom: '自定义风格。'
+      };
+
+      let systemMsg = `你是一位专业的网文作家。请根据以下设定创作小说正文。\n`;
+      systemMsg += `\n【风格要求】\n`;
+      systemMsg += styleMap[stylePresetVal] || styleMap.custom;
+      if(styleTone) systemMsg += ` 语气：${styleTone}。`;
+      if(styleRhythm) systemMsg += ` 句式要求：${styleRhythm}。`;
+
+      systemMsg += `\n【创作防崩铁律】\n1. 严格遵守人设锁定规则，禁止角色OOC（偏离设定）。\n2. 去AI味：避免使用“恐怖如斯”、“倒吸一口凉气”、“眼中闪过一抹异色”等网络水文用语。避免书面腔，多用对话和动作推动剧情。禁止生硬说教。\n3. 确保剧情逻辑自洽，所有信息与提供的世界观、人物设定保持一致。`;
+
+      if(worldRealm) systemMsg += `\n【世界观境界】\n${worldRealm}\n`;
+
+      if(chars.length > 0) {
+        systemMsg += `\n【出场角色人设（含锁定规则）】\n`;
+        chars.forEach(c => {
+          let rule = `角色：${c.name}(${c.alias || ''})，${c.realm || ''}，${c.personality || ''}，口头禅：${c.catchphrase || ''}，弱点：${c.weakness || ''}。`;
+          if(c.lockrule) rule += ` 人设锁定规则（禁止违反）：${c.lockrule}。`;
+          if(c.relations) rule += ` 关系网：${c.relations}。`;
+          systemMsg += `- ${rule}\n`;
+        });
+      }
+
+      systemMsg += `\n【前情摘要】\n${memory || '暂无'}\n`;
+      systemMsg += `\n【当前章节大纲】\n${outline || '根据前情续写'}\n`;
+      systemMsg += `\n【写作指令】生成约${wordTarget}字正文，直接输出故事内容。`;
+      if(hook) systemMsg += ` 必须包含元素：${hook}。`;
+      systemMsg += ` 结尾必须留下悬念或情节钩子，吸引读者继续阅读下一章。`;
+
+      const btn = $('#startWriteBtn');
+      btn.textContent = '⏳ AI 写作中...';
+      try {
+        const res = await fetch(`${apiUrl.replace(/\/$/,'')}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: model,
+            messages: [
+              { role: 'system', content: systemMsg },
+              { role: 'user', content: '请开始创作正文。' }
+            ],
+            temperature: 0.85,
+            max_tokens: Math.min(parseInt(wordTarget) * 4, 8000)
+          })
+        });
+        const data = await res.json();
+        if(!res.ok) throw new Error(data.error?.message || '请求失败');
+        const generated = data.choices[0].message.content.trim();
+        $('#writeResult').value = generated;
+        showToast('✅ 正文已生成！请检查并采纳。');
+      } catch(e) {
+        showToast('生成失败：' + e.message);
+      } finally {
+        btn.textContent = '✨ AI 生成正文';
+      }
+    });
+
+    // 采纳并存入记忆库
+    $('#acceptWriteBtn').addEventListener('click', () => {
+      const generated = $('#writeResult').value.trim();
+      if(!generated || generated.startsWith('//')) {
+        showToast('请先生成有效的正文'); return;
+      }
+      const recent = $('#memoryRecent').value;
+      $('#memoryRecent').value = recent + '\n' + generated.substring(0, 300) + '...';
+      saveData('memoryRecent', $('#memoryRecent').value);
+      showToast('已存入记忆库（已截取前300字摘要）');
+    });
+
+    showToast('创作中枢已就绪，请先填充基础设定');
+  })();
+</script>
+</body>
+</html>
