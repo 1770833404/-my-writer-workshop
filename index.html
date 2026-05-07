@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>网文创作中枢 · 全功能语义版</title>
+    <style>
+        :root {
+            --bg: #0f0d0a; --panel: #1c1610; --text: #d4be8c; --accent: #c0843a;
+            --accent2: #e6a34c; --border: #3d2b18; --editor: #2c2218; --radius: 12px;
+            --font: 'PingFang SC', 'Noto Serif SC', 'KaiTi', sans-serif;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: var(--font); background: var(--bg); color: var(--text); height:100vh; display:flex; overflow:hidden; }
+        .sidebar { width:240px; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+        .sidebar h3 { padding:18px 14px; color:var(--accent2); text-align:center; border-bottom:1px solid var(--border); margin:0; }
+        .tab-list { flex:1; overflow-y:auto; padding:8px; }
+        .tab-btn { display:block; width:100%; text-align:left; background:transparent; border:1px solid transparent; color:var(--text); padding:12px; margin-bottom:2px; border-radius:8px; font-size:0.9rem; cursor:pointer; transition:0.2s; }
+        .tab-btn:hover, .tab-btn.active { background:var(--editor); border-color:var(--accent); color:var(--accent2); }
+        .main-area { flex:1; padding:20px 24px; overflow-y:auto; display:flex; flex-direction:column; gap:16px; }
+        .panel { display:none; flex-direction:column; gap:14px; }
+        .panel.active { display:flex; }
+        h3 { color:var(--accent2); font-size:1.3rem; border-bottom:1px solid var(--border); padding-bottom:8px; margin:0; }
+        .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+        .field { display:flex; flex-direction:column; gap:4px; }
+        label { font-size:0.8rem; color:var(--accent); font-weight:600; }
+        input, textarea, select { background:var(--editor); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:10px; font-size:0.9rem; font-family:var(--font); outline:none; }
+        textarea { min-height:80px; resize:vertical; }
+        .btn { background:var(--accent); color:white; border:none; padding:10px 18px; border-radius:20px; cursor:pointer; font-weight:bold; align-self:flex-start; }
+        .btn:disabled { opacity:0.6; pointer-events:none; }
+        .btn-sm { padding:6px 12px; font-size:0.8rem; border-radius:14px; }
+        .card { background:var(--editor); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:10px; }
+        .list-item { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:var(--editor); border-radius:8px; margin-bottom:6px; }
+        .tag { background:var(--accent); color:white; padding:2px 10px; border-radius:12px; font-size:0.7rem; }
+        .memory-box { background:#1a1410; border:1px solid var(--border); border-radius:var(--radius); padding:12px; max-height:220px; overflow-y:auto; white-space:pre-wrap; font-size:0.85rem; }
+        .toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); background:#2f2416; color:#ffcf8a; padding:8px 20px; border-radius:20px; z-index:999; opacity:0; transition:0.3s; }
+        .toast.show { opacity:1; }
+        .progress-bar { width:100%; height:8px; background:var(--panel); border-radius:4px; overflow:hidden; }
+        .progress-fill { height:100%; background:var(--accent); width:0%; transition:width 0.3s; }
+        .btn-danger { background:#a05a3a; }
+        @media (max-width:768px) { .sidebar { width:200px; } .grid-2, .grid-3 { grid-template-columns:1fr; } }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h3>📖 创作中枢</h3>
+    <div class="tab-list" id="tabList"></div>
+</div>
+<div class="main-area" id="mainArea"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+    // ===================== 全局配置 =====================
+    const CONFIG = {
+        DB_NAME: 'NovelFullDB', DB_VERSION: 1,
+        MAX_RETRIES: 3, RETRY_DELAY: 1000,
+        MEMORY_SLICE_SIZE: 15000, TOP_K: 6, EMBED_CACHE: true,
+        DEBOUNCE_DELAY: 300
+    };
+
+    // ===================== 工具函数 =====================
+    const $ = s => document.querySelector(s);
+    const $$ = s => document.querySelectorAll(s);
+    const Toast = {
+        show(msg) { const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._tid); t._tid=setTimeout(()=>t.classList.remove('show'),2000); }
+    };
+    const countWords = t => t.replace(/\s/g,'').length;
+    let abortController = null;
+    let generateTimer = null;
+
+    // ===================== IndexedDB 封装 =====================
+    class IDB {
+        constructor(name, version) { this.name=name; this.version=version; this.db=null; }
+        async open() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(this.name, this.version);
+                req.onupgradeneeded = e => {
+                    const db = e.target.result;
+                    ['settings','characters','world','outline','volumes','chapters','memory','embeddings'].forEach(s => {
+                        if(!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+                    });
+                };
+                req.onsuccess = e => { this.db=e.target.result; resolve(); };
+                req.onerror = () => reject(req.error);
+            });
+        }
+        async put(store, key, val) {
+            return new Promise((resolve, reject) => {
+                const tx = this.db.transaction(store,'readwrite'), s = tx.objectStore(store);
+                s.put({id:key, data:val}); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+            });
+        }
+        async get(store, key) {
+            return new Promise(resolve => {
+                const tx = this.db.transaction(store,'readonly'), s = tx.objectStore(store);
+                const req = s.get(key); req.onsuccess = () => resolve(req.result?.data??null);
+            });
+        }
+        async getAll(store) {
+            return new Promise(resolve => {
+                const tx = this.db.transaction(store,'readonly'), s = tx.objectStore(store);
+                const req = s.getAll(); req.onsuccess = () => resolve(req.result.map(r=>r.data));
+            });
+        }
+        async delete(store, key) {
+            return new Promise((resolve, reject) => {
+                const tx = this.db.transaction(store,'readwrite'), s = tx.objectStore(store);
+                s.delete(key); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+            });
+        }
+        async clearStore(store) {
+            return new Promise((resolve, reject) => {
+                const tx = this.db.transaction(store,'readwrite'), s = tx.objectStore(store);
+                s.clear(); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+            });
+        }
+    }
+
+    // ===================== Web Worker 语义编码 =====================
+    const workerCode = `
+        importScripts('https://cdn.jsdmirror.com/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
+        let extractor = null;
+        const cache = new Map();
+        async function getExtractor() {
+            if(!extractor) extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+            return extractor;
+        }
+        self.onmessage = async (e) => {
+            const { type, texts } = e.data;
+            if(type === 'encode') {
+                const ex = await getExtractor();
+                const results = [];
+                for(const text of texts) {
+                    if(cache.has(text)) { results.push(cache.get(text)); continue; }
+                    const emb = await ex(text, {pooling:'mean'});
+                    const vec = Array.from(emb.data);
+                    cache.set(text, vec);
+                    results.push(vec);
+                }
+                self.postMessage({type:'encoded', vectors:results});
+            }
+        };
+    `;
+    const workerBlob = new Blob([workerCode], {type:'application/javascript'});
+    const embedWorker = new Worker(URL.createObjectURL(workerBlob));
+
+    // ===================== 记忆服务 =====================
+    class MemoryService {
+        constructor(idb) { this.idb = idb; }
+        async parseFullText(text) {
+            const slices = [];
+            for(let i=0; i<text.length; i+=CONFIG.MEMORY_SLICE_SIZE) slices.push(text.slice(i,i+CONFIG.MEMORY_SLICE_SIZE));
+            await this.idb.put('memory','slices', slices);
+            embedWorker.postMessage({type:'encode', texts: slices});
+            return slices.length;
+        }
+        async getSlices() {
+            return await this.idb.get('memory','slices') || [];
+        }
+        async searchSimilar(query, topK=CONFIG.TOP_K) {
+            const slices = await this.getSlices();
+            if(!slices.length) return [];
+            const queryVec = await this._encodeSingle(query);
+            const sliceVecs = await this._getSliceVectors(slices);
+            const scored = slices.map((text,i) => {
+                const sim = this._cosineSim(queryVec, sliceVecs[i]);
+                return {text, sim};
+            });
+            scored.sort((a,b)=>b.sim-a.sim);
+            return scored.slice(0, topK).map(s=>s.text);
+        }
+        async _encodeSingle(text) {
+            return new Promise(resolve => {
+                embedWorker.postMessage({type:'encode', texts:[text]});
+                embedWorker.onmessage = (e) => { if(e.data.type==='encoded') resolve(e.data.vectors[0]); };
+            });
+        }
+        async _getSliceVectors(slices) {
+            const cachedMap = await this.idb.get('embeddings','cache') || {};
+            const positions = [];
+            const needEncode = [];
+            slices.forEach((text,i) => {
+                if(cachedMap[text]) positions[i] = cachedMap[text];
+                else { needEncode.push({text, i}); }
+            });
+            if(needEncode.length > 0) {
+                const texts = needEncode.map(n=>n.text);
+                const vectors = await new Promise(resolve => {
+                    embedWorker.postMessage({type:'encode', texts});
+                    embedWorker.onmessage = (e) => { if(e.data.type==='encoded') resolve(e.data.vectors); };
+                });
+                needEncode.forEach((n,idx) => {
+                    cachedMap[n.text] = vectors[idx];
+                    positions[n.i] = vectors[idx];
+                });
+                await this.idb.put('embeddings','cache', cachedMap);
+            }
+            return positions;
+        }
+        _cosineSim(a,b) { let dot=0,na=0,nb=0; for(let i=0;i<a.length;i++){ dot+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } return dot/(Math.sqrt(na)*Math.sqrt(nb)); }
+    }
+
+    // ===================== AI服务 =====================
+    class AiService {
+        constructor() { this.controller = null; }
+        async generate(sysPrompt, userPrompt='') {
+            if(this.controller) this.controller.abort();
+            this.controller = new AbortController();
+            // 从 localStorage 读取用户设置的 API 信息
+            const apiUrl = localStorage.getItem('apiUrl') || 'https://api.deepseek.com/v1';
+            const apiKey = localStorage.getItem('apiKey');
+            const model = localStorage.getItem('modelName') || 'deepseek-v4-pro';
+            if(!apiKey) throw new Error('请先在写作面板设置API密钥');
+            let lastErr;
+            for(let i=0; i<CONFIG.MAX_RETRIES; i++) {
+                try {
+                    const res = await fetch(`${apiUrl.replace(/\/$/,'')}/chat/completions`, {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
+                        signal: this.controller.signal,
+                        body: JSON.stringify({
+                            model: model,
+                            messages:[{role:'system',content:sysPrompt},{role:'user',content:userPrompt}],
+                            temperature:0.85, max_tokens:6000
+                        })
+                    });
+                    if(!res.ok) {
+                        const msgs = {401:'密钥无效',429:'请求过快',500:'服务器错误'};
+                        throw new Error(msgs[res.status] || `请求失败(${res.status})`);
+                    }
+                    const data = await res.json();
+                    return data.choices?.[0]?.message?.content || '';
+                } catch(e) {
+                    if(e.name === 'AbortError') throw new Error('生成已取消');
+                    lastErr = e;
+                    if(i < CONFIG.MAX_RETRIES-1) await new Promise(r => setTimeout(r, CONFIG.RETRY_DELAY * (i+1)));
+                }
+            }
+            throw lastErr || new Error('生成失败');
+        }
+        abort() { if(this.controller) this.controller.abort(); this.controller = null; }
+    }
+
+    // ===================== 主应用 =====================
+    const app = {
+        idb: new IDB(CONFIG.DB_NAME, CONFIG.DB_VERSION),
+        memory: null,
+        ai: new AiService(),
+        currentTab: 'dashboard',
+        tabs: [
+            {id:'dashboard', label:'🏠 总控台'}, {id:'characters', label:'👤 人设库'},
+            {id:'world', label:'🌍 世界观'}, {id:'outline', label:'📋 三层大纲'},
+            {id:'chapters', label:'📚 章节管理'}, {id:'memory', label:'🧠 200万字记忆'},
+            {id:'write', label:'✍️ 写作'}, {id:'check', label:'🔍 逻辑校验'},
+            {id:'style', label:'🎨 风格定制'}, {id:'backup', label:'💾 备份导入'}
+        ],
+        async init() {
+            await this.idb.open();
+            this.memory = new MemoryService(this.idb);
+            this.renderSidebar();
+            this.switchTab('dashboard');
+            Toast.show('全功能语义版已启动');
+        },
+        renderSidebar() {
+            const list = $('#tabList');
+            list.innerHTML = this.tabs.map(t => `<button class="tab-btn" data-tab="${t.id}">${t.label}</button>`).join('');
+            list.querySelectorAll('.tab-btn').forEach(b => {
+                b.addEventListener('click', e => this.switchTab(e.target.dataset.tab));
+            });
+        },
+        switchTab(tabId) {
+            this.currentTab = tabId;
+            $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+            const main = $('#mainArea');
+            main.innerHTML = '';
+            const panel = document.createElement('div'); panel.className='panel active'; panel.id='panel-'+tabId;
+            main.appendChild(panel);
+            this.renderPanel(tabId, panel);
+        },
+        renderPanel(tabId, panel) {
+            switch(tabId) {
+                case 'dashboard': renderDashboard(panel, this); break;
+                case 'characters': renderCharacters(panel, this); break;
+                case 'world': renderWorld(panel, this); break;
+                case 'outline': renderOutline(panel, this); break;
+                case 'chapters': renderChapters(panel, this); break;
+                case 'memory': renderMemory(panel, this); break;
+                case 'write': renderWrite(panel, this); break;
+                case 'check': renderCheck(panel); break;
+                case 'style': renderStyle(panel, this); break;
+                case 'backup': renderBackup(panel, this); break;
+            }
+        }
+    };
+
+    // ===================== 面板渲染函数 =====================
+
+    function renderDashboard(panel, app) {
+        panel.innerHTML = `
+            <h3>🏠 小说基础信息</h3>
+            <div class="grid-2">
+                <div class="field"><label>小说名称</label><input id="novelTitle"></div>
+                <div class="field"><label>类型/流派</label><input id="novelGenre"></div>
+            </div>
+            <div class="field"><label>世界观简介</label><textarea id="novelWorldIntro"></textarea></div>
+            <div class="field"><label>故事基调/读者定位</label><input id="novelTone"></div>
+            <button class="btn" id="saveDashboard">💾 保存</button>
+        `;
+        loadSettings(['novelTitle','novelGenre','novelWorldIntro','novelTone'], app);
+        $('#saveDashboard').onclick = () => saveSettings(['novelTitle','novelGenre','novelWorldIntro','novelTone'], app);
+    }
+
+    function renderCharacters(panel, app) {
+        panel.innerHTML = `
+            <h3>👤 人设库</h3>
+            <div id="charList"></div>
+            <button class="btn btn-sm" id="addChar">+ 新建角色</button>
+            <div class="card hide" id="charEditor">
+                <div class="grid-2">
+                    <div class="field"><label>全名</label><input id="charName"></div>
+                    <div class="field"><label>别名</label><input id="charAlias"></div>
+                </div>
+                <div class="field"><label>性格</label><input id="charPersonality"></div>
+                <div class="field"><label>境界</label><input id="charRealm"></div>
+                <div class="field"><label>口头禅</label><input id="charCatchphrase"></div>
+                <div class="field"><label>弱点/禁忌</label><input id="charWeakness"></div>
+                <div class="field"><label>关系网</label><textarea id="charRelations"></textarea></div>
+                <button class="btn" id="saveChar">保存</button>
+            </div>
+        `;
+        let currentCharId = null;
+        const refresh = async () => {
+            const chars = await app.idb.get('characters','list') || [];
+            $('#charList').innerHTML = chars.map((c,i) => `
+                <div class="list-item">
+                    <span><strong>${c.name}</strong> <span class="tag">${c.realm||'未知'}</span></span>
+                    <div>
+                        <button class="btn btn-sm edit-char" data-index="${i}">编辑</button>
+                        <button class="btn btn-sm del-char btn-danger" data-index="${i}">删除</button>
+                    </div>
+                </div>
+            `).join('');
+            $$('.edit-char').forEach(b => b.onclick = async () => {
+                const chars = await app.idb.get('characters','list') || [];
+                const c = chars[b.dataset.index];
+                currentCharId = b.dataset.index;
+                $('#charName').value = c.name; $('#charAlias').value = c.alias; $('#charPersonality').value = c.personality;
+                $('#charRealm').value = c.realm; $('#charCatchphrase').value = c.catchphrase;
+                $('#charWeakness').value = c.weakness; $('#charRelations').value = c.relations;
+                $('#charEditor').classList.remove('hide');
+            });
+            $$('.del-char').forEach(b => b.onclick = async () => {
+                if(!confirm('确定删除？')) return;
+                let chars = await app.idb.get('characters','list') || [];
+                chars.splice(b.dataset.index, 1);
+                await app.idb.put('characters','list', chars);
+                refresh();
+            });
+        };
+        refresh();
+        $('#addChar').onclick = () => {
+            currentCharId = null;
+            ['charName','charAlias','charPersonality','charRealm','charCatchphrase','charWeakness','charRelations'].forEach(id => $('#'+id).value='');
+            $('#charEditor').classList.remove('hide');
+        };
+        $('#saveChar').onclick = async () => {
+            const name = $('#charName').value.trim();
+            if(!name) return Toast.show('请填写角色名');
+            let chars = await app.idb.get('characters','list') || [];
+            const obj = {name, alias:$('#charAlias').value, personality:$('#charPersonality').value, realm:$('#charRealm').value, catchphrase:$('#charCatchphrase').value, weakness:$('#charWeakness').value, relations:$('#charRelations').value};
+            if(currentCharId !== null) chars[currentCharId] = obj;
+            else chars.push(obj);
+            await app.idb.put('characters','list', chars);
+            $('#charEditor').classList.add('hide');
+            refresh();
+            Toast.show('角色已保存');
+        };
+    }
+
+    function renderWorld(panel, app) {
+        panel.innerHTML = `
+            <h3>🌍 世界观规则</h3>
+            <div class="field"><label>修炼体系</label><textarea id="worldRealm"></textarea></div>
+            <div class="field"><label>势力分布</label><textarea id="worldMap"></textarea></div>
+            <div class="field"><label>世界铁律</label><textarea id="worldRules"></textarea></div>
+            <button class="btn" id="saveWorld">💾 保存</button>
+        `;
+        loadSettings(['worldRealm','worldMap','worldRules'], app);
+        $('#saveWorld').onclick = () => saveSettings(['worldRealm','worldMap','worldRules'], app);
+    }
+
+    function renderOutline(panel, app) {
+        panel.innerHTML = `
+            <h3>📋 三层大纲</h3>
+            <div class="field"><label>总纲</label><textarea id="outlineMaster"></textarea></div>
+            <div class="field"><label>卷纲</label><textarea id="outlineVolume"></textarea></div>
+            <div class="field"><label>章纲</label><textarea id="outlineChapter"></textarea></div>
+            <button class="btn" id="saveOutline">💾 保存</button>
+        `;
+        loadSettings(['outlineMaster','outlineVolume','outlineChapter'], app);
+        $('#saveOutline').onclick = () => saveSettings(['outlineMaster','outlineVolume','outlineChapter'], app);
+    }
+
+    function renderChapters(panel, app) {
+        panel.innerHTML = `
+            <h3>📚 分卷与章节</h3>
+            <div style="display:flex; gap:10px; margin-bottom:10px;">
+                <button class="btn btn-sm" id="addVolume">+ 新建分卷</button>
+                <button class="btn btn-sm" id="exportTxt">📤 导出全书TXT</button>
+            </div>
+            <div id="volumeList"></div>
+        `;
+        const refresh = async () => {
+            const volumes = await app.idb.get('volumes','list') || [];
+            const chapters = await app.idb.get('chapters','list') || [];
+            let html = '';
+            volumes.forEach(vol => {
+                html += `<div class="card">
+                    <div class="card-header">
+                        <span>📁 ${vol.name}</span>
+                        <div>
+                            <button class="btn btn-sm rename-vol" data-id="${vol.id}">重命名</button>
+                            <button class="btn btn-sm del-vol btn-danger" data-id="${vol.id}">删除</button>
+                        </div>
+                    </div>`;
+                const volChapters = chapters.filter(ch => ch.volumeId === vol.id);
+                volChapters.forEach((ch, idx) => {
+                    html += `<div class="list-item">
+                        <span>${ch.title} <span class="tag">${countWords(ch.content||'')}字</span></span>
+                        <div>
+                            <button class="btn btn-sm move-up" data-id="${ch.id}" ${idx===0?'disabled':''}>↑</button>
+                            <button class="btn btn-sm move-down" data-id="${ch.id}" ${idx===volChapters.length-1?'disabled':''}>↓</button>
+                            <button class="btn btn-sm rename-ch" data-id="${ch.id}">重命名</button>
+                            <button class="btn btn-sm del-ch btn-danger" data-id="${ch.id}">删除</button>
+                        </div>
+                    </div>`;
+                });
+                html += `<button class="btn btn-sm add-ch" data-vol="${vol.id}" style="margin-left:20px;">+ 添加章节</button></div>`;
+            });
+            $('#volumeList').innerHTML = html || '暂无分卷，请新建';
+
+            // 事件绑定
+            $$('.rename-vol').forEach(b => b.onclick = async () => {
+                const vols = await app.idb.get('volumes','list') || [];
+                const vol = vols.find(v => v.id === b.dataset.id);
+                const newName = prompt('新名称', vol?.name);
+                if(newName) { vol.name = newName; await app.idb.put('volumes','list', vols); refresh(); }
+            });
+            $$('.del-vol').forEach(b => b.onclick = async () => {
+                if(!confirm('删除分卷会同时删除其中所有章节，确定？')) return;
+                let vols = await app.idb.get('volumes','list') || [];
+                vols = vols.filter(v => v.id !== b.dataset.id);
+                await app.idb.put('volumes','list', vols);
+                let chs = await app.idb.get('chapters','list') || [];
+                chs = chs.filter(c => c.volumeId !== b.dataset.id);
+                await app.idb.put('chapters','list', chs);
+                refresh();
+            });
+            $$('.add-ch').forEach(b => b.onclick = async () => {
+                const title = prompt('章节标题');
+                if(!title) return;
+                let chs = await app.idb.get('chapters','list') || [];
+                chs.push({id: Date.now().toString(), title, volumeId: b.dataset.vol, content: ''});
+                await app.idb.put('chapters','list', chs);
+                refresh();
+            });
+            $$('.move-up').forEach(b => b.onclick = async () => {
+                let chs = await app.idb.get('chapters','list') || [];
+                const ch = chs.find(c => c.id === b.dataset.id);
+                if(!ch) return;
+                const siblings = chs.filter(c => c.volumeId === ch.volumeId).sort((a,b)=>a.id.localeCompare(b.id));
+                const idx = siblings.findIndex(c => c.id === ch.id);
+                if(idx > 0) {
+                    const temp = siblings[idx]; siblings[idx] = siblings[idx-1]; siblings[idx-1] = temp;
+                    const other = chs.filter(c => c.volumeId !== ch.volumeId);
+                    await app.idb.put('chapters','list', [...other, ...siblings]);
+                    refresh();
+                }
+            });
+            $$('.move-down').forEach(b => b.onclick = async () => {
+                let chs = await app.idb.get('chapters','list') || [];
+                const ch = chs.find(c => c.id === b.dataset.id);
+                if(!ch) return;
+                const siblings = chs.filter(c => c.volumeId === ch.volumeId).sort((a,b)=>a.id.localeCompare(b.id));
+                const idx = siblings.findIndex(c => c.id === ch.id);
+                if(idx < siblings.length-1) {
+                    const temp = siblings[idx]; siblings[idx] = siblings[idx+1]; siblings[idx+1] = temp;
+                    const other = chs.filter(c => c.volumeId !== ch.volumeId);
+                    await app.idb.put('chapters','list', [...other, ...siblings]);
+                    refresh();
+                }
+            });
+            $$('.rename-ch').forEach(b => b.onclick = async () => {
+                let chs = await app.idb.get('chapters','list') || [];
+                const ch = chs.find(c => c.id === b.dataset.id);
+                if(!ch) return;
+                const newTitle = prompt('新标题', ch.title);
+                if(newTitle) { ch.title = newTitle; await app.idb.put('chapters','list', chs); refresh(); }
+            });
+            $$('.del-ch').forEach(b => b.onclick = async () => {
+                if(!confirm('删除该章节？')) return;
+                let chs = await app.idb.get('chapters','list') || [];
+                chs = chs.filter(c => c.id !== b.dataset.id);
+                await app.idb.put('chapters','list', chs);
+                refresh();
+            });
+        };
+        refresh();
+        $('#addVolume').onclick = async () => {
+            const name = prompt('分卷名称');
+            if(!name) return;
+            let vols = await app.idb.get('volumes','list') || [];
+            vols.push({id: Date.now().toString(), name});
+            await app.idb.put('volumes','list', vols);
+            refresh();
+        };
+        $('#exportTxt').onclick = async () => {
+            const vols = await app.idb.get('volumes','list') || [];
+            const chs = await app.idb.get('chapters','list') || [];
+            let txt = '';
+            vols.forEach(vol => {
+                txt += `\n=== ${vol.name} ===\n`;
+                chs.filter(c => c.volumeId === vol.id).forEach(ch => txt += `## ${ch.title}\n\n${ch.content}\n\n`);
+            });
+            const blob = new Blob(['\uFEFF'+txt], {type:'text/plain;charset=utf-8'});
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '小说全文.txt'; a.click();
+            Toast.show('导出成功');
+        };
+    }
+
+    function renderMemory(panel, app) {
+        panel.innerHTML = `
+            <h3>🧠 200万字语义记忆库</h3>
+            <textarea id="fullTextInput" rows="6" placeholder="粘贴整本小说正文..."></textarea>
+            <button class="btn" id="parseBtn">🚀 解析并建立语义索引</button>
+            <div id="memStatus" class="memory-box">暂无记忆数据</div>
+        `;
+        (async () => {
+            const slices = await app.memory.getSlices();
+            $('#memStatus').textContent = slices.length ? `已索引 ${slices.length} 个片段` : '暂无记忆数据';
+        })();
+        $('#parseBtn').onclick = async () => {
+            const text = $('#fullTextInput').value.trim();
+            if(!text) return Toast.show('请粘贴正文');
+            Toast.show('后台解析中...');
+            const count = await app.memory.parseFullText(text);
+            $('#memStatus').textContent = `已索引 ${count} 个片段`;
+            Toast.show(`解析完成，共${count}个片段`);
+        };
+    }
+
+    function renderWrite(panel, app) {
+        panel.innerHTML = `
+            <h3>✍️ 写作引擎</h3>
+            <div class="grid-2">
+                <div class="field"><label>API 地址</label><input id="apiUrlInput" placeholder="https://api.deepseek.com/v1"></div>
+                <div class="field"><label>模型名称</label><input id="modelNameInput" placeholder="deepseek-v4-pro"></div>
+            </div>
+            <div class="field"><label>API密钥</label><input type="password" id="apiKeyInput"></div>
+            <div class="field"><label>当前章纲</label><textarea id="writeOutline"></textarea></div>
+            <div class="grid-2">
+                <div class="field"><label>目标字数</label><input id="wordTarget" type="number" value="2000"></div>
+                <div class="field"><label>钩子</label><input id="hookInput"></div>
+            </div>
+            <div class="field"><label>📖 多权重语义关联记忆</label><div class="memory-box" id="recallResult">暂未检索</div></div>
+            <div style="display:flex; gap:10px;">
+                <button class="btn" id="genBtn">✨ 生成</button>
+                <button class="btn btn-danger" id="stopBtn" style="display:none;">⏹️ 取消生成</button>
+            </div>
+            <textarea id="resultArea" rows="10"></textarea>
+            <button class="btn btn-sm" id="adoptBtn">✅ 采纳到章节</button>
+        `;
+        // 从 localStorage 加载上次保存的值
+        $('#apiUrlInput').value = localStorage.getItem('apiUrl') || 'https://api.deepseek.com/v1';
+        $('#modelNameInput').value = localStorage.getItem('modelName') || 'deepseek-v4-pro';
+        $('#apiKeyInput').value = localStorage.getItem('apiKey') || '';
+        // 自动保存到 localStorage
+        $('#apiUrlInput').oninput = e => localStorage.setItem('apiUrl', e.target.value);
+        $('#modelNameInput').oninput = e => localStorage.setItem('modelName', e.target.value);
+        $('#apiKeyInput').oninput = e => localStorage.setItem('apiKey', e.target.value);
+
+        let generating = false;
+        const startGen = async () => {
+            if(generating) return;
+            const outline = $('#writeOutline').value.trim();
+            if(!outline) return Toast.show('请输入章纲');
+            generating = true;
+            $('#genBtn').disabled = true; $('#stopBtn').style.display = 'inline-block';
+            try {
+                const queries = [
+                    {text: outline, weight: 1.0},
+                    {text: await app.idb.get('settings','outlineMaster') || '', weight: 0.5},
+                    {text: await app.idb.get('settings','outlineVolume') || '', weight: 0.3}
+                ];
+                const chars = await app.idb.get('characters','list') || [];
+                const charText = chars.map(c => `${c.name}：${c.personality}，境界${c.realm}`).join('；');
+                if(charText) queries.push({text: charText, weight: 0.4});
+                const recallMap = new Map();
+                for(const q of queries) {
+                    const results = await app.memory.searchSimilar(q.text, 8);
+                    results.forEach(r => recallMap.set(r, (recallMap.get(r)||0) + q.weight));
+                }
+                const sorted = [...recallMap.entries()].sort((a,b) => b[1]-a[1]).slice(0,6).map(e=>e[0]);
+                $('#recallResult').textContent = sorted.join('\n\n') || '无关联记忆';
+                const sys = `网文作家。关联记忆：\n${sorted.join('\n')}\n续写约${$('#wordTarget').value}字，禁用“恐怖如斯”等水词。`;
+                const result = await app.ai.generate(sys, outline);
+                $('#resultArea').value = result;
+                Toast.show('生成完成');
+            } catch(e) { Toast.show(e.message); }
+            finally { generating=false; $('#genBtn').disabled=false; $('#stopBtn').style.display='none'; }
+        };
+        $('#genBtn').onclick = () => { clearTimeout(generateTimer); generateTimer = setTimeout(startGen, CONFIG.DEBOUNCE_DELAY); };
+        $('#stopBtn').onclick = () => {
+            app.ai.abort();
+            Toast.show('已取消生成');
+            generating = false;
+            $('#genBtn').disabled = false;
+            $('#stopBtn').style.display = 'none';
+        };
+        $('#adoptBtn').onclick = async () => {
+            const content = $('#resultArea').value.trim();
+            if(!content) return Toast.show('请先生成');
+            let chs = await app.idb.get('chapters','currentDraft') || '';
+            chs += '\n\n' + content;
+            await app.idb.put('chapters','currentDraft', chs);
+            Toast.show('已追加到当前草稿');
+        };
+    }
+
+    function renderCheck(panel) {
+        panel.innerHTML = `<h3>🔍 逻辑校验</h3><button class="btn" id="runCheck">执行检查</button><div id="checkResult" class="memory-box"></div>`;
+        $('#runCheck').onclick = () => $('#checkResult').textContent = '✅ 请人工确认：人设、战力、伏笔是否一致';
+    }
+
+    function renderStyle(panel, app) {
+        panel.innerHTML = `
+            <h3>🎨 风格定制</h3>
+            <select id="stylePreset"><option value="chendong">辰东</option><option value="tudou">土豆</option></select>
+            <input id="styleTone" placeholder="自定义语气">
+            <button class="btn" id="saveStyle">保存</button>
+        `;
+        loadSettings(['stylePreset','styleTone'], app);
+        $('#saveStyle').onclick = () => saveSettings(['stylePreset','styleTone'], app);
+    }
+
+    function renderBackup(panel, app) {
+        panel.innerHTML = `
+            <h3>💾 数据备份与恢复</h3>
+            <button class="btn" id="exportBackup">📤 导出全部数据</button>
+            <button class="btn" id="importBackup">📥 导入备份文件</button>
+            <input type="file" id="importFile" style="display:none" accept=".json">
+        `;
+        $('#exportBackup').onclick = async () => {
+            const stores = ['settings','characters','world','outline','volumes','chapters','memory','embeddings'];
+            const backup = {};
+            for(const s of stores) {
+                const all = await app.idb.getAll(s);
+                backup[s] = all;
+            }
+            const blob = new Blob([JSON.stringify(backup)], {type:'application/json'});
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '写作中枢_备份.json'; a.click();
+            Toast.show('备份已导出');
+        };
+        $('#importBackup').onclick = () => $('#importFile').click();
+        $('#importFile').onchange = async (e) => {
+            const file = e.target.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                try {
+                    const data = JSON.parse(ev.target.result);
+                    for(const [store, items] of Object.entries(data)) {
+                        if(Array.isArray(items)) {
+                            await app.idb.clearStore(store);
+                            for(const item of items) await app.idb.put(store, item.id || Date.now().toString(), item.data || item);
+                        }
+                    }
+                    Toast.show('数据恢复成功，请刷新界面');
+                } catch(e) { Toast.show('备份文件格式错误'); }
+            };
+            reader.readAsText(file);
+        };
+    }
+
+    // ===================== 设置加载保存辅助函数 =====================
+    async function loadSettings(ids, app) {
+        for(const id of ids) { const el=$('#'+id); if(el) el.value = await app.idb.get('settings',id) || ''; }
+    }
+    async function saveSettings(ids, app) {
+        for(const id of ids) { const el=$('#'+id); if(el) await app.idb.put('settings',id, el.value); }
+        Toast.show('已保存');
+    }
+
+    // ===================== 启动 =====================
+    window.addEventListener('load', () => app.init());
+</script>
+</body>
+</html>
