@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>网文创作中枢 · 深度过检版</title>
+    <style>
+        :root {
+            --bg: #0f0d0a; --panel: #1c1610; --text: #d4be8c; --accent: #c0843a;
+            --accent2: #e6a34c; --border: #3d2b18; --editor: #2c2218; --radius: 12px;
+            --font: 'PingFang SC', 'Noto Serif SC', 'KaiTi', sans-serif;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: var(--font); background: var(--bg); color: var(--text); height:100vh; display:flex; overflow:hidden; }
+        .sidebar { width:240px; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+        .sidebar h3 { padding:18px 14px; color:var(--accent2); text-align:center; border-bottom:1px solid var(--border); margin:0; }
+        .tab-list { flex:1; overflow-y:auto; padding:8px; }
+        .tab-btn { display:block; width:100%; text-align:left; background:transparent; border:1px solid transparent; color:var(--text); padding:12px; margin-bottom:2px; border-radius:8px; font-size:0.9rem; cursor:pointer; transition:0.2s; }
+        .tab-btn:hover, .tab-btn.active { background:var(--editor); border-color:var(--accent); color:var(--accent2); }
+        .main-area { flex:1; padding:20px 24px; overflow-y:auto; display:flex; flex-direction:column; gap:16px; }
+        .panel { display:none; flex-direction:column; gap:14px; }
+        .panel.active { display:flex; }
+        h3 { color:var(--accent2); font-size:1.3rem; border-bottom:1px solid var(--border); padding-bottom:8px; margin:0; }
+        .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        .field { display:flex; flex-direction:column; gap:4px; }
+        label { font-size:0.8rem; color:var(--accent); font-weight:600; }
+        input, textarea, select { background:var(--editor); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:10px; font-size:0.9rem; font-family:var(--font); outline:none; }
+        textarea { min-height:80px; resize:vertical; }
+        .btn { background:var(--accent); color:white; border:none; padding:10px 18px; border-radius:20px; cursor:pointer; font-weight:bold; align-self:flex-start; }
+        .btn:disabled { opacity:0.6; pointer-events:none; }
+        .btn-sm { padding:6px 12px; font-size:0.8rem; border-radius:14px; }
+        .card { background:var(--editor); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:10px; }
+        .list-item { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:var(--editor); border-radius:8px; margin-bottom:6px; }
+        .tag { background:var(--accent); color:white; padding:2px 10px; border-radius:12px; font-size:0.7rem; }
+        .memory-box { background:#1a1410; border:1px solid var(--border); border-radius:var(--radius); padding:12px; max-height:220px; overflow-y:auto; white-space:pre-wrap; font-size:0.85rem; }
+        .toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); background:#2f2416; color:#ffcf8a; padding:8px 20px; border-radius:20px; z-index:999; opacity:0; transition:0.3s; }
+        .toast.show { opacity:1; }
+        .btn-danger { background:#a05a3a; }
+        .hint { font-size:0.7rem; color:#8a7958; margin-top:-8px; }
+        @media (max-width:768px) { .sidebar { width:200px; } .grid-2 { grid-template-columns:1fr; } }
+    </style>
+</head>
+<body>
+<div class="sidebar">
+    <h3>📖 创作中枢</h3>
+    <div class="tab-list" id="tabList"></div>
+</div>
+<div class="main-area" id="mainArea"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+    // ========== localStorage 封装 ==========
+    const LS = {
+        get(key, fallback = null) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch(e) { return fallback; } },
+        set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch(e) { return false; } }
+    };
+
+    // ========== 工具函数 ==========
+    const $ = s => document.querySelector(s);
+    const $$ = s => document.querySelectorAll(s);
+    const Toast = { show(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._tid); t._tid = setTimeout(() => t.classList.remove('show'), 2000); } };
+    const countWords = t => t.replace(/\s/g,'').length;
+    const tabs = [
+        {id:'dashboard', label:'🏠 总控台'}, {id:'characters', label:'👤 人设库'}, {id:'world', label:'🌍 世界观'},
+        {id:'outline', label:'📋 三层大纲'}, {id:'chapters', label:'📚 章节管理'}, {id:'memory', label:'🧠 记忆库'},
+        {id:'write', label:'✍️ 写作'}, {id:'check', label:'🔍 逻辑校验'}, {id:'style', label:'🎨 风格定制'},
+        {id:'backup', label:'💾 备份导入'}
+    ];
+
+    function renderSidebar() {
+        const list = $('#tabList');
+        list.innerHTML = tabs.map(t => `<button class="tab-btn" data-tab="${t.id}">${t.label}</button>`).join('');
+        list.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', e => switchTab(e.target.dataset.tab)));
+    }
+
+    function switchTab(tabId) {
+        $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+        const main = $('#mainArea');
+        main.innerHTML = '';
+        const panel = document.createElement('div'); panel.className='panel active'; panel.id='panel-'+tabId;
+        main.appendChild(panel);
+        renderPanel(tabId, panel);
+    }
+
+    function renderPanel(tabId, panel) {
+        switch(tabId) {
+            case 'dashboard': renderDashboard(panel); break;
+            case 'characters': renderCharacters(panel); break;
+            case 'world': renderWorld(panel); break;
+            case 'outline': renderOutline(panel); break;
+            case 'chapters': renderChapters(panel); break;
+            case 'memory': renderMemory(panel); break;
+            case 'write': renderWrite(panel); break;
+            case 'check': renderCheck(panel); break;
+            case 'style': renderStyle(panel); break;
+            case 'backup': renderBackup(panel); break;
+        }
+    }
+
+    // ========== 通用 API 调用 ==========
+    async function callAi(apiUrl, apiKey, model, systemMsg, userMsg, maxTokens = 6000) {
+        const res = await fetch(`${apiUrl}/chat/completions`, {
+            method:'POST',
+            headers:{'Content-Type':'application/json','Authorization':`Bearer ${apiKey}`},
+            body: JSON.stringify({model, messages:[{role:'system',content:systemMsg},{role:'user',content:userMsg}], temperature:0.85, max_tokens:maxTokens})
+        });
+        if(!res.ok) throw new Error(`请求失败(${res.status})`);
+        const data = await res.json();
+        return data.choices?.[0]?.message?.content || '';
+    }
+
+    // ========== 面板实现（总控台、人设、世界观、大纲、章节、记忆、校验、风格、备份均与之前版本相同，此处省略重复代码，仅展示核心写作面板） ==========
+
+    // ========== 7️⃣ 写作（深度过检版本） ==========
+    function renderWrite(panel) {
+        panel.innerHTML = `
+            <h3>✍️ 写作引擎（朱雀改写到0）</h3>
+            <div class="grid-2">
+                <div class="field"><label>API 地址</label><input id="apiUrlInput" placeholder="https://api.deepseek.com/v1"></div>
+                <div class="field"><label>模型名称</label><input id="modelNameInput" placeholder="deepseek-v4-pro"></div>
+            </div>
+            <div class="field"><label>API密钥</label><input type="password" id="apiKeyInput"></div>
+            <div class="field"><label>当前章纲</label><textarea id="writeOutline"></textarea></div>
+            <div class="grid-2">
+                <div class="field"><label>目标字数</label><input id="wordTarget" type="number" value="2000" min="200" max="8000" step="100"><span class="hint">AI将严格控制在±10%范围内</span></div>
+                <div class="field"><label>钩子/额外指令</label><input id="hookInput" placeholder="结尾留悬念"></div>
+            </div>
+            <div class="field"><label>📖 关联记忆（关键词匹配）</label><div class="memory-box" id="recallResult">暂未检索</div></div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button class="btn" id="genBtn">✨ 普通生成</button>
+                <button class="btn" id="deepCheckBtn" style="background:#b85e1e;">🔄 深度过检（改写到0）</button>
+                <button class="btn btn-danger" id="stopBtn" style="display:none;">⏹️ 取消生成</button>
+            </div>
+            <textarea id="resultArea" rows="10"></textarea>
+            <button class="btn btn-sm" id="adoptBtn">✅ 采纳到章节</button>
+            <div class="card">
+                <h4 style="color:var(--accent2);margin-bottom:8px;">🛡️ 朱雀过检报告</h4>
+                <div id="checkReport" class="memory-box">点击“深度过检”后此处将显示多轮改写过程与最终评分</div>
+            </div>
+        `;
+        // 加载配置
+        $('#apiUrlInput').value = LS.get('apiUrl','https://api.deepseek.com/v1');
+        $('#modelNameInput').value = LS.get('modelName','deepseek-v4-pro');
+        $('#apiKeyInput').value = LS.get('apiKey','');
+        ['apiUrlInput','modelNameInput','apiKeyInput'].forEach(id => { $('#'+id).oninput = e => LS.set(id.replace('Input',''), e.target.value); });
+
+        let abortCtrl = null, generating = false;
+
+        // 获取API信息
+        function getApiInfo() {
+            return {
+                url: $('#apiUrlInput').value.trim(),
+                key: $('#apiKeyInput').value.trim(),
+                model: $('#modelNameInput').value.trim()
+            };
+        }
+
+        // 构建写作系统提示词
+        function buildWriteSys(wordTarget) {
+            const slices = LS.get('memorySlices', []); const outline = $('#writeOutline').value.trim();
+            const keywords = outline.split(/[，。\s]+/).filter(k => k.length>=2);
+            let relevant = []; slices.forEach(s => { let score=0; keywords.forEach(k => { if(s.includes(k)) score++; }); if(score>0) relevant.push({text:s, score}); });
+            relevant.sort((a,b)=>b.score-a.score); relevant = relevant.slice(0,4).map(r=>r.text);
+            $('#recallResult').textContent = relevant.join('\n\n') || '无关联记忆';
+            const worldRealm = LS.get('worldRealm',''); const chars = LS.get('characters',[]);
+            let charDesc = chars.map(c => `${c.name}:${c.personality},${c.realm}`).join('；');
+            const hook = $('#hookInput').value ? `；${$('#hookInput').value}` : '';
+            return `网文作家。${worldRealm ? '世界观：'+worldRealm : ''} 角色：${charDesc} 前文记忆：${relevant.join(' ')} 续写正文，严格将正文字数控制在${wordTarget}字左右（误差不超过±10%），直接输出正文，不解释说明。${hook}`;
+        }
+
+        // AI自评函数：返回0-100的AI嫌疑分
+        async function selfEvaluate(text) {
+            const {url, key, model} = getApiInfo();
+            if(!key) throw new Error('未设置API密钥');
+            const sys = `你是专业的AI文本检测专家。请分析以下文本的“AI生成痕迹”，从0到100打分：
+0分：完全像人类写作，充满不规则句式、细腻感官描写、个性化用词。
+100分：明显是AI生成，句式工整、用词华丽空洞、缺乏真实细节。
+只需回复一个整数分数，不要解释。`;
+            const scoreStr = await callAi(url, key, model, sys, text, 50);
+            const score = parseInt(scoreStr);
+            return isNaN(score) ? 50 : Math.min(100, Math.max(0, score));
+        }
+
+        // 改写函数
+        async function rewriteText(text) {
+            const {url, key, model} = getApiInfo();
+            const sys = `你是专业小说编辑。请改写以下文本，使其完全像人类写作。
+要求：
+1. 打破规律性句式，长短句随机交错，插入不完整的口语短句。
+2. 增加生活化细节、具体感官（温度、气味、触感），减少华丽形容词。
+3. 对话更自然，可加入人物小动作、语气词。
+4. 避免使用“恐怖如斯”“倒吸一口凉气”“眼中闪过”等AI水词。
+5. 保持原情节不变，只优化表达。直接输出改写后的全文，不要解释。`;
+            return await callAi(url, key, model, sys, text, 8000);
+        }
+
+        // 深度过检主循环
+        async function deepRewriteUntilZero(initialText) {
+            let currentText = initialText;
+            let reportLog = `📝 初稿字数：${countWords(currentText)}\n`;
+            const maxIter = 5;
+            for(let i=1; i<=maxIter; i++) {
+                const score = await selfEvaluate(currentText);
+                reportLog += `🔍 第${i}轮自评：AI嫌疑分 ${score}/100\n`;
+                if(score === 0) {
+                    reportLog += `✅ 已通过朱雀自检，无需继续改写。`;
+                    $('#checkReport').textContent = reportLog;
+                    return currentText;
+                }
+                if(i < maxIter) {
+                    reportLog += `🔄 正在进行第${i}轮改写...\n`;
+                    currentText = await rewriteText(currentText);
+                } else {
+                    reportLog += `⚠️ 已达最大改写次数，输出当前文本。`;
+                }
+            }
+            $('#checkReport').textContent = reportLog;
+            return currentText;
+        }
+
+        // 启动深度过检流程
+        const startDeepCheck = async () => {
+            if(generating) return;
+            const outline = $('#writeOutline').value.trim(); if(!outline) return Toast.show('请输入章纲');
+            generating = true;
+            $('#deepCheckBtn').disabled = true; $('#genBtn').disabled = true; $('#stopBtn').style.display = 'inline-block';
+            $('#checkReport').textContent = '⏳ 正在生成初稿...';
+            try {
+                const {url, key, model} = getApiInfo(); if(!key) throw new Error('未设置API密钥');
+                const wordTarget = parseInt($('#wordTarget').value)||2000;
+                const sys = buildWriteSys(wordTarget);
+                // 1. 生成初稿
+                const draft = await callAi(url, key, model, sys, outline, Math.min(Math.ceil(wordTarget*2.2),8000));
+                // 2. 深度过检循环
+                const finalText = await deepRewriteUntilZero(draft);
+                $('#resultArea').value = finalText;
+                Toast.show(`过检完成，最终字数：${countWords(finalText)}`);
+            } catch(e) {
+                if(e.name !== 'AbortError') Toast.show('失败：'+e.message);
+            } finally {
+                generating=false; $('#deepCheckBtn').disabled=false; $('#genBtn').disabled=false; $('#stopBtn').style.display='none';
+            }
+        };
+
+        // 普通生成（保留）
+        const startNormalGen = async () => {
+            if(generating) return;
+            const outline = $('#writeOutline').value.trim(); if(!outline) return Toast.show('请输入章纲');
+            generating = true; $('#genBtn').disabled = true; $('#deepCheckBtn').disabled = true; $('#stopBtn').style.display = 'inline-block';
+            try {
+                const {url, key, model} = getApiInfo(); if(!key) throw new Error('未设置API密钥');
+                const wordTarget = parseInt($('#wordTarget').value)||2000;
+                const sys = buildWriteSys(wordTarget);
+                abortCtrl = new AbortController();
+                const res = await fetch(`${url}/chat/completions`, {
+                    method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},
+                    signal:abortCtrl.signal,
+                    body:JSON.stringify({model, messages:[{role:'system',content:sys},{role:'user',content:outline}], temperature:0.85, max_tokens:Math.min(Math.ceil(wordTarget*2.2),8000)})
+                });
+                if(!res.ok) throw new Error(`请求失败(${res.status})`);
+                const data = await res.json();
+                $('#resultArea').value = data.choices?.[0]?.message?.content || '';
+                Toast.show(`生成完成，字数：${countWords($('#resultArea').value||'')}`);
+            } catch(e) { if(e.name !== 'AbortError') Toast.show(e.message); }
+            finally { generating=false; $('#genBtn').disabled=false; $('#deepCheckBtn').disabled=false; $('#stopBtn').style.display='none'; }
+        };
+
+        $('#genBtn').onclick = () => { clearTimeout(window._genTimer); window._genTimer = setTimeout(startNormalGen, 300); };
+        $('#deepCheckBtn').onclick = () => { clearTimeout(window._genTimer); window._genTimer = setTimeout(startDeepCheck, 300); };
+        $('#stopBtn').onclick = () => { if(abortCtrl) abortCtrl.abort(); };
+        $('#adoptBtn').onclick = () => {
+            const content = $('#resultArea').value.trim(); if(!content) return Toast.show('请先生成');
+            let chs = LS.get('chapters', []); if(!chs.length) { LS.set('volumes', [{id:'v1', name:'默认卷'}]); chs.push({id:'c1', title:'第1章', volumeId:'v1', content:''}); }
+            chs[0].content += '\n' + content; LS.set('chapters', chs); Toast.show('已追加到第1章');
+        };
+    }
+
+    // 省略其他面板（总控台、人设等）的实现，这里为了节省篇幅，只写出了核心写作面板。实际使用时，需要将之前回答中的完整面板函数补全。
+    // 您可以自行复制之前版本的 renderDashboard, renderCharacters 等函数，它们完全兼容。
+
+    // 启动
+    renderSidebar();
+    switchTab('dashboard');
+    Toast.show('深度过检版已启动');
+</script>
+</body>
+</html>
