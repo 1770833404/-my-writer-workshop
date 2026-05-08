@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>网文创作中枢 · iPhone专用修复版</title>
+  <style>
+    :root{--bg:#0f0d0a;--panel:#1c1610;--text:#d4be8c;--accent:#c0843a;--border:#3d2b18;--editor:#2c2218}
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system, PingFang SC, sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+    .header{background:var(--panel);border-bottom:1px solid var(--border);padding:15px;text-align:center;font-size:1.5rem;color:var(--accent)}
+    .container{padding:15px}
+    .tab-bar{display:flex;gap:8px;overflow-x:auto;padding-bottom:10px;margin-bottom:15px}
+    .tab-btn{background:var(--editor);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;white-space:nowrap}
+    .tab-btn.active{background:var(--accent);color:white}
+    .panel{display:none}
+    .panel.active{display:block}
+    .field{margin-bottom:12px}
+    label{display:block;font-size:0.8rem;color:var(--accent);margin-bottom:4px}
+    input, textarea, select{width:100%;background:var(--editor);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-size:1rem}
+    textarea{min-height:100px;resize:vertical}
+    .btn{background:var(--accent);color:white;border:none;padding:10px 18px;border-radius:20px;margin-top:8px}
+    .btn:disabled{opacity:0.6}
+    .memory-box{background:#1a1410;border:1px solid var(--border);border-radius:8px;padding:10px;max-height:150px;overflow-y:auto;white-space:pre-wrap;font-size:0.9rem}
+    .toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#2f2416;color:#ffcf8a;padding:8px 20px;border-radius:20px;opacity:0;transition:0.3s}
+    .toast.show{opacity:1}
+  </style>
+</head>
+<body>
+<div class="header">📖 创作中枢</div>
+<div class="container">
+  <div class="tab-bar" id="tabBar">
+    <button class="tab-btn active" data-tab="write">✍️ 写作</button>
+    <button class="tab-btn" data-tab="chapters">📚 章节</button>
+    <button class="tab-btn" data-tab="backup">💾 备份</button>
+  </div>
+
+  <!-- 写作面板 -->
+  <div class="panel active" id="panel-write">
+    <div class="field">
+      <label>🔑 AI密钥（DeepSeek）</label>
+      <input type="password" id="apiKey" placeholder="sk-...">
+    </div>
+    <div class="field">
+      <label>📝 章纲</label>
+      <textarea id="outline" placeholder="写清楚场景、冲突、人物动作"></textarea>
+    </div>
+    <div class="field">
+      <label>📖 目标字数</label>
+      <input type="number" id="wordTarget" value="2000" min="500" max="5000">
+    </div>
+    <div class="field">
+      <label>📑 目标章节</label>
+      <select id="targetChapter"></select>
+    </div>
+    <div class="field">
+      <label>📝 检测日志</label>
+      <div class="memory-box" id="logBox">等待执行...</div>
+    </div>
+    <button class="btn" id="genBtn">✨ 生成正文</button>
+    <button class="btn" id="checkBtn" style="background:#b85e1e;margin-left:8px;">🔄 AI过检</button>
+    <textarea id="resultArea" rows="10" style="margin-top:15px" placeholder="正文将显示在这里"></textarea>
+    <button class="btn" id="saveBtn" style="margin-top:8px;">✅ 保存到章节</button>
+  </div>
+
+  <!-- 章节面板 -->
+  <div class="panel" id="panel-chapters">
+    <div id="chapterList"></div>
+    <button class="btn" id="addChapterBtn">+ 新建章节</button>
+  </div>
+
+  <!-- 备份面板 -->
+  <div class="panel" id="panel-backup">
+    <button class="btn" id="exportBtn">📤 导出备份</button>
+    <button class="btn" id="importBtn" style="margin-left:8px;">📥 导入备份</button>
+    <input type="file" id="importFile" style="display:none">
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// 本地存储封装
+const LS = {
+  get(key, fallback = null) {
+    try {
+      const v = localStorage.getItem(key);
+      return v ? JSON.parse(v) : fallback;
+    } catch (e) { return fallback; }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch (e) { return false; }
+  }
+};
+
+// 工具函数
+const $ = (s) => document.querySelector(s);
+const countWords = t => t.replace(/\s/g, '').length;
+const Toast = {
+  show(msg) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(t._tid);
+    t._tid = setTimeout(() => t.classList.remove('show'), 2000);
+  }
+};
+
+// 切换标签
+$('#tabBar').addEventListener('click', (e) => {
+  if (e.target.classList.contains('tab-btn')) {
+    const tab = e.target.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${tab}`));
+    if (tab === 'chapters') renderChapterList();
+  }
+});
+
+// 初始化章节列表
+function renderChapterList() {
+  const chs = LS.get('chapters', []);
+  let html = '';
+  chs.forEach((ch, i) => {
+    html += `
+      <div style="background:#1a1410;padding:10px;border-radius:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+        <span>${ch.title} <small>(${countWords(ch.content)}字)</small></span>
+        <button style="background:#a05a3a;color:white;border:none;padding:4px 8px;border-radius:4px;font-size:0.8rem" onclick="delChapter(${i})">删除</button>
+      </div>
+    `;
+  });
+  $('#chapterList').innerHTML = html || '<p style="color:#8a7958">暂无章节，请新建</p>';
+  updateChapterSelect();
+}
+
+// 删除章节
+window.delChapter = function(i) {
+  if (!confirm('确定删除？')) return;
+  let chs = LS.get('chapters', []);
+  chs.splice(i, 1);
+  LS.set('chapters', chs);
+  renderChapterList();
+};
+
+// 更新章节下拉框
+function updateChapterSelect() {
+  const chs = LS.get('chapters', []);
+  let options = '<option value="">请选择目标章节</option>';
+  chs.forEach(ch => options += `<option value="${ch.id}">${ch.title}</option>`);
+  $('#targetChapter').innerHTML = options;
+}
+
+// 新建章节
+$('#addChapterBtn').onclick = () => {
+  const title = prompt('章节标题');
+  if (!title) return;
+  let chs = LS.get('chapters', []);
+  chs.push({ id: Date.now().toString(), title, content: '' });
+  LS.set('chapters', chs);
+  renderChapterList();
+  Toast.show('章节已创建');
+};
+
+// AI 生成正文
+async function callDeepSeek(key, prompt, wordCount) {
+  const sys = `你是网文作家，根据用户提供的章纲，生成一篇约${wordCount}字的小说正文，风格自然，不使用AI套话，直接输出正文。`;
+  const res = await fetch('https://api.deepseek.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`
+    },
+    body: JSON.stringify({
+      model: 'deepseek-v3',
+      messages: [{ role: 'system', content: sys }, { role: 'user', content: prompt }],
+      temperature: 0.8,
+      max_tokens: Math.min(wordCount * 2, 8000)
+    })
+  });
+  if (!res.ok) throw new Error('API请求失败');
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content || '';
+}
+
+// AI 检测改写（公共中转）
+async function checkAndRewrite(text, key) {
+  // 1. 检测AI概率
+  const checkRes = await fetch('https://api.oioweb.cn/api/check/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: text.slice(0, 6000) })
+  });
+  const checkData = await checkRes.json();
+  if (checkData.code !== 200) throw new Error('检测接口异常');
+  const score = Math.round(checkData.data.ai * 100);
+  let log = `初稿AI概率：${score}/100\n`;
+
+  // 2. 如果概率过高，自动改写
+  if (score > 5) {
+    log += '正在真人化改写...\n';
+    const rewriteRes = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-v3',
+        messages: [{
+          role: 'system',
+          content: '把这段AI生成的网文改成真人手写风格：拆长句、加细节、去掉套话、语气自然，不改剧情。'
+        }, { role: 'user', content: text }],
+        temperature: 0.9,
+        max_tokens: 8000
+      })
+    });
+    const rewriteData = await rewriteRes.json();
+    text = rewriteData?.choices?.[0]?.message?.content || text;
+    log += `改写完成，字数：${countWords(text)}\n`;
+  } else {
+    log += '✅ 已通过检测，无需改写\n';
+  }
+  return { text, log };
+}
+
+// 生成按钮
+$('#genBtn').onclick = async () => {
+  const key = $('#apiKey').value.trim();
+  const outline = $('#outline').value.trim();
+  const wordCount = parseInt($('#wordTarget').value) || 2000;
+  if (!key || !outline) return Toast.show('请填写密钥和章纲');
+  $('#genBtn').disabled = true;
+  $('#logBox').textContent = '正在生成正文...';
+  try {
+    const text = await callDeepSeek(key, outline, wordCount);
+    $('#resultArea').value = text;
+    $('#logBox').textContent = `生成完成，字数：${countWords(text)}`;
+    Toast.show('正文生成完成');
+  } catch (e) {
+    $('#logBox').textContent = `错误：${e.message}`;
+    Toast.show('生成失败');
+  } finally {
+    $('#genBtn').disabled = false;
+  }
+};
+
+// 过检按钮
+$('#checkBtn').onclick = async () => {
+  const key = $('#apiKey').value.trim();
+  const text = $('#resultArea').value.trim();
+  if (!key || !text) return Toast.show('请先生成正文并填写密钥');
+  $('#checkBtn').disabled = true;
+  $('#logBox').textContent = '正在检测并改写...';
+  try {
+    const { text: newText, log } = await checkAndRewrite(text, key);
+    $('#resultArea').value = newText;
+    $('#logBox').textContent = log;
+    Toast.show('过检完成');
+  } catch (e) {
+    $('#logBox').textContent = `错误：${e.message}`;
+    Toast.show('过检失败');
+  } finally {
+    $('#checkBtn').disabled = false;
+  }
+};
+
+// 保存到章节
+$('#saveBtn').onclick = () => {
+  const text = $('#resultArea').value.trim();
+  const targetId = $('#targetChapter').value;
+  if (!text || !targetId) return Toast.show('请生成正文并选择章节');
+  let chs = LS.get('chapters', []);
+  const ch = chs.find(c => c.id === targetId);
+  if (!ch) return Toast.show('章节不存在');
+  ch.content += '\n' + text;
+  LS.set('chapters', chs);
+  Toast.show(`已保存到【${ch.title}】`);
+  renderChapterList();
+};
+
+// 备份导出
+$('#exportBtn').onclick = () => {
+  const backup = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    backup[key] = LS.get(key);
+  }
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '写作中枢备份.json';
+  a.click();
+  Toast.show('备份已导出');
+};
+
+// 备份导入
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').onchange = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      localStorage.clear();
+      Object.entries(data).forEach(([k, v]) => LS.set(k, v));
+      Toast.show('导入成功，请刷新页面');
+      renderChapterList();
+    } catch {
+      Toast.show('备份格式错误');
+    }
+  };
+  reader.readAsText(file);
+};
+
+// 初始化
+renderChapterList();
+$('#apiKey').value = LS.get('apiKey', '');
+$('#apiKey').oninput = () => LS.set('apiKey', $('#apiKey').value);
+</script>
+</body>
+</html>
