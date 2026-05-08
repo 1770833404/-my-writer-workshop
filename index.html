@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>网文创作中枢 · 终极整合版</title>
+<style>
+:root{--bg:#0b0b12;--card:#14141f;--text:#c5c8e6;--main:#7c8cff;--border:#2a2a3f;--btn:#5c6cdf;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:system-ui,"微软雅黑";padding:20px;line-height:1.6;height:100vh;display:flex;overflow:hidden;}
+.sidebar{width:200px;background:var(--card);border-right:1px solid var(--border);padding:10px;overflow-y:auto;}
+.sidebar h3{color:var(--main);font-size:16px;margin-bottom:10px;}
+.tab-btn{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;color:var(--text);padding:8px 12px;margin-bottom:4px;border-radius:6px;font-size:14px;cursor:pointer;}
+.tab-btn:hover,.tab-btn.active{background:#1e1e30;border-color:var(--main);color:var(--main);}
+.main-area{flex:1;padding:20px;overflow-y:auto;}
+.panel{display:none;flex-direction:column;gap:16px;}
+.panel.active{display:flex;}
+h3{color:var(--main);margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:8px;}
+.box{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;}
+textarea,input,select{width:100%;background:#1a1a2b;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:10px;margin:8px 0;outline:none;}
+textarea{min-height:100px;resize:vertical;}
+button{background:var(--btn);color:#fff;border:none;padding:9px 18px;border-radius:6px;cursor:pointer;margin:4px;}
+button:hover{opacity:0.9;}
+button:disabled{opacity:0.5;}
+.flex{display:flex;gap:12px;flex-wrap:wrap;}
+.memo{background:#10101a;padding:12px;border-radius:6px;border:1px solid var(--border);max-height:200px;overflow-y:auto;white-space:pre-wrap;font-size:14px;}
+.tag{background:var(--main);color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:8px;}
+.hint{font-size:12px;color:#888;}
+</style>
+</head>
+<body>
+<div class="sidebar">
+    <h3>📖 创作中枢</h3>
+    <button class="tab-btn active" data-tab="dashboard">🏠 总控台</button>
+    <button class="tab-btn" data-tab="characters">👤 人设库</button>
+    <button class="tab-btn" data-tab="world">🌍 世界观</button>
+    <button class="tab-btn" data-tab="outline">📋 三层大纲</button>
+    <button class="tab-btn" data-tab="chapters">📚 章节管理</button>
+    <button class="tab-btn" data-tab="memory">🧠 记忆库</button>
+    <button class="tab-btn" data-tab="inkos">🤖 InkOS</button>
+    <button class="tab-btn" data-tab="write">✍️ 写作</button>
+    <button class="tab-btn" data-tab="style">🎨 风格定制</button>
+    <button class="tab-btn" data-tab="backup">💾 备份导入</button>
+</div>
+<div class="main-area" id="mainArea"></div>
+
+<script>
+// ===================== 全局配置 =====================
+const CONFIG = {
+    DB_NAME: 'NovelWriterFinal',
+    API_DEFAULT_URL: 'https://api.deepseek.com/v1',
+    API_DEFAULT_MODEL: 'deepseek-v4-pro',
+    MEMORY_SLICE_SIZE: 15000,
+    MAX_SLICES: 20,
+    ZHUQUE_PASS_SCORE: 5,
+    ZHUQUE_MAX_ROUNDS: 5
+};
+
+// ===================== 本地存储 =====================
+const LS = {
+    get(key, fallback = null) {
+        try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch(e) { return fallback; }
+    },
+    set(key, value) {
+        try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch(e) { return false; }
+    }
+};
+
+// ===================== 工具函数 =====================
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const Toast = {
+    show(msg) {
+        const t = document.createElement('div');
+        t.style.cssText = 'position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#2f2416;color:#ffcf8a;padding:8px 20px;border-radius:20px;z-index:999;font-size:14px;';
+        t.textContent = msg;
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 2000);
+    }
+};
+const countWords = t => t.replace(/\s/g,'').length;
+
+// ===================== 导航 =====================
+const tabs = ['dashboard','characters','world','outline','chapters','memory','inkos','write','style','backup'];
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const tabId = btn.dataset.tab;
+        const main = $('#mainArea');
+        main.innerHTML = '';
+        const panel = document.createElement('div');
+        panel.className = 'panel active';
+        panel.id = 'panel-' + tabId;
+        main.appendChild(panel);
+        const renderers = {
+            dashboard: renderDashboard, characters: renderCharacters, world: renderWorld,
+            outline: renderOutline, chapters: renderChapters, memory: renderMemory,
+            inkos: renderInkOS, write: renderWrite, style: renderStyle, backup: renderBackup
+        };
+        if(renderers[tabId]) renderers[tabId](panel);
+    });
+});
+
+// ===================== API 调用 =====================
+async function callAi(url, key, model, sys, usr, maxT = 6000) {
+    const res = await fetch(`${url}/chat/completions`, {
+        method:'POST', headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},
+        body: JSON.stringify({model, messages:[{role:'system',content:sys},{role:'user',content:usr}], temperature:0.85, max_tokens:maxT})
+    });
+    if(!res.ok) throw new Error(`API请求失败 (${res.status})`);
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content || '';
+}
+
+// AI自评
+async function selfEvaluate(text, url, key, model) {
+    const sys = '你是AI检测专家，分析文本的“AI生成痕迹”，从0到100打分。0=完全像人，100=明显AI。只回复整数。';
+    const scoreStr = await callAi(url, key, model, sys, text, 40);
+    const score = parseInt(scoreStr) || 50;
+    return Math.min(100, Math.max(0, score));
+}
+
+// ===================== InkOS 多智能体 =====================
+const InkOS = {
+    splitOutline(vol) {
+        const arr = vol.split(/[；。\n]/).filter(x => x.trim());
+        return arr.map((item, i) => `第${i+1}章：${item}`).join('\n');
+    },
+    checkLogic(text, chars, rule) {
+        let warns = [];
+        chars.forEach(c => {
+            if(text.includes(c.name) && !text.includes(c.level) && c.level) {
+                warns.push(`⚠️ 角色【${c.name}】未体现境界`);
+            }
+        });
+        const aiWords = ["心中一凛","脸色微变","恐怖如斯","眼中闪过一抹","不由暗道","嘴角微扬"];
+        aiWords.forEach(w => { if(text.includes(w)) warns.push(`⚠️ 网文套话：${w}`); });
+        return warns.length ? warns.join('\n') : '✅ InkOS审核通过';
+    },
+    reWriteHuman(text) {
+        let res = text
+            .replace(/心中一凛/g,"心头一紧")
+            .replace(/脸色微变/g,"面色沉了沉")
+            .replace(/恐怖如斯/g,"气势逼人")
+            .replace(/眼中闪过一抹/g,"眼底掠过")
+            .replace(/不由暗道/g,"心中暗忖")
+            .replace(/嘴角微扬/g,"唇角微勾")
+            .replace(/陡然/g,"蓦地")
+            .replace(/顿时/g,"一时间");
+        const lines = res.split(/[。，]/);
+        const newArr = [];
+        lines.forEach((line, i) => {
+            newArr.push(line);
+            if(i % 4 === 0 && line.length > 10) newArr.push("");
+        });
+        return newArr.join("。");
+    },
+    recallMemory(outline, slices) {
+        const kw = outline.split(/[，。\s]+/).filter(k => k.length >= 2);
+        const matches = [];
+        slices.forEach(s => {
+            let score = 0;
+            kw.forEach(k => { if(s.includes(k)) score++; });
+            if(score > 0) matches.push({ text: s, score });
+        });
+        matches.sort((a, b) => b.score - a.score);
+        return matches.slice(0, 4).map(m => m.text).join('\n\n');
+    }
+};
+
+// ===================== 面板实现 =====================
+function renderDashboard(panel) {
+    panel.innerHTML = `<div class="box"><h3>🏠 小说基础信息</h3>
+        <input placeholder="小说名称" id="novelTitle">
+        <input placeholder="类型/流派" id="novelGenre">
+        <textarea placeholder="世界观简介" id="novelWorldIntro"></textarea>
+        <input placeholder="故事基调/读者定位" id="novelTone">
+        <button id="saveDashboard">💾 保存</button></div>`;
+    $('#novelTitle').value = LS.get('novelTitle','');
+    $('#novelGenre').value = LS.get('novelGenre','');
+    $('#novelWorldIntro').value = LS.get('novelWorldIntro','');
+    $('#novelTone').value = LS.get('novelTone','');
+    $('#saveDashboard').onclick = () => {
+        LS.set('novelTitle', $('#novelTitle').value);
+        LS.set('novelGenre', $('#novelGenre').value);
+        LS.set('novelWorldIntro', $('#novelWorldIntro').value);
+        LS.set('novelTone', $('#novelTone').value);
+        Toast.show('已保存');
+    };
+}
+
+function renderCharacters(panel) {
+    panel.innerHTML = `<div class="box"><h3>👤 人设库</h3>
+        <div class="flex"><input placeholder="角色姓名" id="charName"><input placeholder="境界/身份" id="charLevel"><input placeholder="性格特点" id="charTrait"></div>
+        <button id="addChar">+ 添加角色</button>
+        <div class="memo" id="charList"></div></div>`;
+    const refresh = () => {
+        const chars = LS.get('characters', []);
+        $('#charList').innerHTML = chars.map((c,i) => `${i+1}. ${c.name} | ${c.level} | ${c.trait}`).join('\n') || '暂无角色';
+    };
+    refresh();
+    $('#addChar').onclick = () => {
+        const name = $('#charName').value.trim();
+        const level = $('#charLevel').value.trim();
+        const trait = $('#charTrait').value.trim();
+        if(!name) return Toast.show('请输入角色姓名');
+        const chars = LS.get('characters', []);
+        chars.push({ name, level, trait });
+        LS.set('characters', chars);
+        $('#charName').value = ''; $('#charLevel').value = ''; $('#charTrait').value = '';
+        refresh();
+        Toast.show('角色已添加');
+    };
+}
+
+function renderWorld(panel) {
+    panel.innerHTML = `<div class="box"><h3>🌍 世界观规则</h3>
+        <textarea placeholder="修炼体系 / 境界划分" id="worldRealm"></textarea>
+        <textarea placeholder="势力分布" id="worldMap"></textarea>
+        <textarea placeholder="世界铁律" id="worldRules"></textarea>
+        <button id="saveWorld">💾 保存</button></div>`;
+    $('#worldRealm').value = LS.get('worldRealm','');
+    $('#worldMap').value = LS.get('worldMap','');
+    $('#worldRules').value = LS.get('worldRules','');
+    $('#saveWorld').onclick = () => {
+        LS.set('worldRealm', $('#worldRealm').value);
+        LS.set('worldMap', $('#worldMap').value);
+        LS.set('worldRules', $('#worldRules').value);
+        Toast.show('已保存');
+    };
+}
+
+function renderOutline(panel) {
+    panel.innerHTML = `<div class="box"><h3>📋 三层大纲</h3>
+        <textarea placeholder="总纲（全书主线）" id="outlineMaster"></textarea>
+        <textarea placeholder="卷纲（当前卷剧情）" id="outlineVol"></textarea>
+        <button id="splitOutline">🔧 卷纲自动拆分为章纲</button>
+        <div class="memo" id="chapterOutline"></div></div>`;
+    $('#outlineMaster').value = LS.get('outlineMaster','');
+    $('#outlineVol').value = LS.get('outlineVol','');
+    $('#splitOutline').onclick = () => {
+        const vol = $('#outlineVol').value.trim();
+        if(!vol) return Toast.show('请输入卷纲');
+        const result = InkOS.splitOutline(vol);
+        $('#chapterOutline').innerText = result;
+        LS.set('chapterOutline', result);
+        Toast.show('章纲已拆分');
+    };
+    const saved = LS.get('chapterOutline','');
+    if(saved) $('#chapterOutline').innerText = saved;
+}
+
+function renderChapters(panel) {
+    panel.innerHTML = `<div class="box"><h3>📚 章节管理</h3>
+        <div class="flex"><button id="addVolume">+ 新建分卷</button><button id="exportTxt">📤 导出全书TXT</button></div>
+        <div class="memo" id="volumeList"></div></div>`;
+    const refresh = () => {
+        const vols = LS.get('volumes', []);
+        const chs = LS.get('chapters', []);
+        let html = '';
+        vols.forEach(vol => {
+            html += `📁 ${vol.name}\n`;
+            const volChs = chs.filter(c => c.volumeId === vol.id);
+            volChs.forEach((ch, idx) => {
+                html += `  ${idx+1}. ${ch.title} <span class="tag">${countWords(ch.content||'')}字</span>\n`;
+            });
+            html += '\n';
+        });
+        $('#volumeList').innerHTML = html || '暂无分卷';
+    };
+    refresh();
+    $('#addVolume').onclick = () => {
+        const name = prompt('分卷名称');
+        if(!name) return;
+        const vols = LS.get('volumes', []);
+        vols.push({ id: Date.now().toString(), name });
+        LS.set('volumes', vols);
+        refresh();
+    };
+    $('#exportTxt').onclick = () => {
+        const vols = LS.get('volumes', []);
+        const chs = LS.get('chapters', []);
+        let txt = '';
+        vols.forEach(vol => {
+            txt += `\n=== ${vol.name} ===\n`;
+            chs.filter(c => c.volumeId === vol.id).forEach(c => txt += `## ${c.title}\n\n${c.content}\n\n`);
+        });
+        const blob = new Blob(['\uFEFF'+txt], {type:'text/plain;charset=utf-8'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '小说全文.txt';
+        a.click();
+        Toast.show('导出成功');
+    };
+}
+
+function renderMemory(panel) {
+    panel.innerHTML = `<div class="box"><h3>🧠 长文记忆库</h3>
+        <textarea placeholder="粘贴已写全文，载入记忆库" id="fullText"></textarea>
+        <button id="loadMemory">📥 载入分片记忆</button>
+        <button id="clearMemory">🗑️ 清空记忆</button>
+        <div class="memo" id="memoryInfo">${LS.get('memorySlices',[]).length ? `已载入 ${LS.get('memorySlices',[]).length} 个记忆片段` : '未载入记忆'}</div></div>`;
+    $('#loadMemory').onclick = () => {
+        const text = $('#fullText').value.trim();
+        if(!text) return Toast.show('请粘贴全文');
+        const slices = [];
+        for(let i=0; i<text.length && slices.length<CONFIG.MAX_SLICES; i+=CONFIG.MEMORY_SLICE_SIZE) {
+            slices.push(text.slice(i, i+CONFIG.MEMORY_SLICE_SIZE));
+        }
+        LS.set('memorySlices', slices);
+        $('#memoryInfo').innerText = `已载入 ${slices.length} 个记忆片段`;
+        Toast.show('记忆载入完成');
+    };
+    $('#clearMemory').onclick = () => {
+        LS.set('memorySlices', []);
+        $('#memoryInfo').innerText = '未载入记忆';
+        Toast.show('记忆已清空');
+    };
+}
+
+function renderInkOS(panel) {
+    panel.innerHTML = `<div class="box"><h3>🤖 InkOS 多智能体</h3>
+        <div class="memo">📝 创作 | 🔍 审核 | 🔄 改写 | 📋 拆纲</div>
+        <textarea placeholder="粘贴卷纲" id="inkosVol"></textarea>
+        <button id="inkosSplit">1. 拆为章纲</button>
+        <div class="memo" id="inkosSplitRes"></div>
+        <textarea placeholder="粘贴正文" id="inkosText"></textarea>
+        <div class="flex"><button id="inkosCheck">2. 逻辑审核</button><button id="inkosRewrite">3. 真人化改写</button></div>
+        <div class="memo" id="inkosResult"></div></div>`;
+    $('#inkosSplit').onclick = () => {
+        const val = $('#inkosVol').value.trim();
+        if(!val) return Toast.show('请输入卷纲');
+        $('#inkosSplitRes').innerText = InkOS.splitOutline(val);
+    };
+    $('#inkosCheck').onclick = () => {
+        const text = $('#inkosText').value.trim();
+        if(!text) return Toast.show('请粘贴正文');
+        const chars = LS.get('characters', []);
+        const rule = LS.get('worldRules', '');
+        $('#inkosResult').innerText = InkOS.checkLogic(text, chars, rule);
+    };
+    $('#inkosRewrite').onclick = () => {
+        const text = $('#inkosText').value.trim();
+        if(!text) return Toast.show('请粘贴正文');
+        $('#inkosText').value = InkOS.reWriteHuman(text);
+        $('#inkosResult').innerText = '✅ 已改写，可复制使用';
+    };
+}
+
+function renderWrite(panel) {
+    panel.innerHTML = `<div class="box"><h3>✍️ 写作引擎</h3>
+        <div class="flex"><input placeholder="API地址" id="apiUrl" value="${LS.get('apiUrl',CONFIG.API_DEFAULT_URL)}"><input type="password" placeholder="API密钥" id="apiKey" value="${LS.get('apiKey','')}"></div>
+        <input placeholder="模型名称" id="modelName" value="${LS.get('modelName',CONFIG.API_DEFAULT_MODEL)}">
+        <textarea placeholder="当前章纲" id="writeOutline"></textarea>
+        <div class="flex"><input placeholder="目标字数" id="wordTarget" type="number" value="2200"><input placeholder="结尾钩子" id="hookInput"></div>
+        <button id="recallBtn">🔍 关联前文记忆</button>
+        <div class="memo" id="recallResult">自动关联RAG记忆</div>
+        <div class="flex">
+            <button id="genBtn">✨ 生成正文</button>
+            <button id="deepCheckBtn" style="background:#b85e1e;">🔄 过检改写</button>
+        </div>
+        <textarea placeholder="生成内容/改写结果" id="resultText"></textarea>
+        <button id="adoptBtn">✅ 采纳到章节</button>
+        <div class="memo" id="checkReport"></div></div>`;
+
+    ['apiUrl','modelName','apiKey'].forEach(id => {
+        $('#'+id).oninput = e => LS.set(id, e.target.value);
+    });
+
+    const getApi = () => ({
+        url: $('#apiUrl').value.trim() || CONFIG.API_DEFAULT_URL,
+        key: $('#apiKey').value.trim(),
+        model: $('#modelName').value.trim() || CONFIG.API_DEFAULT_MODEL
+    });
+
+    $('#recallBtn').onclick = () => {
+        const outline = $('#writeOutline').value.trim();
+        const slices = LS.get('memorySlices', []);
+        const rel = InkOS.recallMemory(outline, slices);
+        $('#recallResult').innerText = rel || '无匹配前文记忆';
+    };
+
+    $('#genBtn').onclick = async () => {
+        const outline = $('#writeOutline').value.trim();
+        if(!outline) return Toast.show('请输入章纲');
+        const {url, key, model} = getApi();
+        if(!key) return Toast.show('请填写API密钥');
+        $('#genBtn').disabled = true;
+        try {
+            const style = LS.get('stylePreset','qitian');
+            const world = LS.get('worldRealm','');
+            const chars = LS.get('characters',[]);
+            const cd = chars.map(c => `${c.name}:${c.trait},${c.level}`).join('；');
+            const memory = $('#recallResult').innerText;
+            const wt = parseInt($('#wordTarget').value)||2200;
+            const hook = $('#hookInput').value ? `，结尾：${$('#hookInput').value}` : '';
+            let sys = `你是网文作家。${world?'世界观：'+world:''} 角色：${cd} 前文：${memory} 续写${wt}字正文，直接输出。${hook}`;
+            if(style === 'qitian') sys = `你是《齐天氏》风格作者：热血爆发，台词铿锵，正邪分明，节奏极快，直接输出正文。` + sys;
+            else if(style === 'coldwhite') sys = `冷笔白描，陈述句，不用情绪词，短句为主，半文半白。` + sys;
+            const result = await callAi(url, key, model, sys, outline, Math.min(Math.ceil(wt*2.2), 8000));
+            $('#resultText').value = result;
+            Toast.show(`生成完成，字数：${countWords(result)}`);
+        } catch(e) { Toast.show('失败：'+e.message); }
+        finally { $('#genBtn').disabled = false; }
+    };
+
+    $('#deepCheckBtn').onclick = async () => {
+        const content = $('#resultText').value.trim();
+        if(!content) return Toast.show('请先生成正文');
+        const {url, key, model} = getApi();
+        if(!key) return Toast.show('请填写API密钥');
+        $('#deepCheckBtn').disabled = true;
+        let text = content;
+        let log = `📄 初稿字数：${countWords(text)}\n`;
+        for(let i=1; i<=CONFIG.ZHUQUE_MAX_ROUNDS; i++) {
+            const score = await selfEvaluate(text, url, key, model);
+            log += `🔍 第${i}轮自评：AI嫌疑分 ${score}/100\n`;
+            if(score <= CONFIG.ZHUQUE_PASS_SCORE) { log += '✅ 达标'; break; }
+            if(i < CONFIG.ZHUQUE_MAX_ROUNDS) {
+                log += '🔄 真人化改写...\n';
+                text = await callAi(url, key, model, '你是文学编辑，将下文改为真人手写风格，去套话，加细节，保持原意。', text, 8000);
+            } else log += '⚠️ 已达最大轮次';
+        }
+        $('#checkReport').innerText = log;
+        $('#resultText').value = text;
+        Toast.show('过检完成');
+        $('#deepCheckBtn').disabled = false;
+    };
+
+    $('#adoptBtn').onclick = () => {
+        const content = $('#resultText').value.trim();
+        if(!content) return;
+        let chs = LS.get('chapters', []);
+        if(!chs.length) {
+            LS.set('volumes', [{id:'v1', name:'默认卷'}]);
+            chs.push({id:'c1', title:'第1章', volumeId:'v1', content:''});
+        }
+        chs[0].content += '\n' + content;
+        LS.set('chapters', chs);
+        Toast.show('已追加到第1章');
+    };
+}
+
+function renderStyle(panel) {
+    panel.innerHTML = `<div class="box"><h3>🎨 风格定制</h3>
+        <select id="stylePreset"><option value="qitian">齐天氏 · 热血祖魂</option><option value="chendong">辰东 · 宏大玄幻</option><option value="coldwhite">冷笔白描</option></select>
+        <textarea placeholder="补充自定义语气..." id="styleTone"></textarea>
+        <button id="saveStyle">💾 保存</button></div>`;
+    $('#stylePreset').value = LS.get('stylePreset','qitian');
+    $('#styleTone').value = LS.get('styleTone','');
+    $('#saveStyle').onclick = () => {
+        LS.set('stylePreset', $('#stylePreset').value);
+        LS.set('styleTone', $('#styleTone').value);
+        Toast.show('风格已保存');
+    };
+}
+
+function renderBackup(panel) {
+    panel.innerHTML = `<div class="box"><h3>💾 备份导入</h3>
+        <button id="exportBackup">📤 导出全部数据</button>
+        <button id="importBackup">📥 导入备份文件</button>
+        <input type="file" id="importFile" style="display:none" accept=".json"></div>`;
+    $('#exportBackup').onclick = () => {
+        const backup = {};
+        for(let i=0; i<localStorage.length; i++) backup[localStorage.key(i)] = LS.get(localStorage.key(i));
+        const blob = new Blob([JSON.stringify(backup,null,2)], {type:'application/json;charset=utf-8'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = '写作中枢备份.json';
+        a.click();
+        Toast.show('已导出');
+    };
+    $('#importBackup').onclick = () => $('#importFile').click();
+    $('#importFile').onchange = e => {
+        const file = e.target.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            try {
+                const d = JSON.parse(ev.target.result);
+                localStorage.clear();
+                Object.entries(d).forEach(([k,v]) => LS.set(k,v));
+                Toast.show('恢复成功，请刷新');
+            } catch(ex) { Toast.show('格式错误'); }
+        };
+        reader.readAsText(file);
+    };
+}
+
+// 启动
+document.querySelector('.tab-btn.active').click();
+Toast.show('终极整合版已启动');
+</script>
+</body>
+</html>
