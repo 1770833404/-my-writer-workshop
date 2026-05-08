@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>网文创作中枢｜全提示词引擎 中文完整版</title>
+  <style>
+    :root {
+      --背景: #0f0d0a;
+      --面板: #1c1610;
+      --文字: #d4be8c;
+      --主色: #c0843a;
+      --亮主色: #e6a34c;
+      --边框: #3d2b18;
+      --编辑框: #2c2218;
+      --圆角: 12px;
+      --字体: "微软雅黑", "宋体", "黑体", sans-serif;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: var(--字体);
+      background: var(--背景);
+      color: var(--文字);
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+    }
+    /* 侧边栏 */
+    .侧边栏 {
+      width: 240px;
+      background: var(--面板);
+      border-right: 1px solid var(--边框);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+    .侧边栏 h3 {
+      padding: 18px 14px;
+      color: var(--亮主色);
+      text-align: center;
+      border-bottom: 1px solid var(--边框);
+      margin: 0;
+    }
+    .标签列表 {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    .标签按钮 {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--文字);
+      padding: 12px;
+      margin-bottom: 2px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .标签按钮:hover, .标签按钮.激活 {
+      background: var(--编辑框);
+      border-color: var(--主色);
+      color: var(--亮主色);
+    }
+    /* 主区域 */
+    .主区域 {
+      flex: 1;
+      padding: 20px 24px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .面板 {
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .面板.激活 {
+      display: flex;
+    }
+    h3 {
+      color: var(--亮主色);
+      font-size: 1.3rem;
+      border-bottom: 1px solid var(--边框);
+      padding-bottom: 8px;
+      margin: 0;
+    }
+    /* 两列网格 */
+    .双列布局 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .表单项 {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    label {
+      font-size: 0.8rem;
+      color: var(--主色);
+      font-weight: 600;
+    }
+    input, textarea, select {
+      background: var(--编辑框);
+      border: 1px solid var(--边框);
+      color: var(--文字);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.9rem;
+      font-family: var(--字体);
+      outline: none;
+    }
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+    /* 按钮 */
+    .按钮 {
+      background: var(--主色);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-weight: bold;
+      align-self: flex-start;
+    }
+    .按钮:disabled {
+      opacity: 0.6;
+      pointer-events: none;
+    }
+    .小按钮 {
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      border-radius: 14px;
+    }
+    .危险按钮 {
+      background: #a05a3a;
+    }
+    /* 卡片 */
+    .卡片 {
+      background: var(--编辑框);
+      border: 1px solid var(--边框);
+      border-radius: var(--圆角);
+      padding: 14px;
+      margin-bottom: 10px;
+    }
+    .列表项 {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--编辑框);
+      border-radius: 8px;
+      margin-bottom: 6px;
+    }
+    .标签角标 {
+      background: var(--主色);
+      color: #fff;
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 0.7rem;
+    }
+    /* 记忆盒子 */
+    .记忆盒子 {
+      background: #1a1410;
+      border: 1px solid var(--边框);
+      border-radius: var(--圆角);
+      padding: 12px;
+      max-height: 220px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-size: 0.85rem;
+    }
+    /* 提示弹窗 */
+    .提示弹窗 {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #2f2416;
+      color: #ffcf8a;
+      padding: 8px 20px;
+      border-radius: 20px;
+      z-index: 999;
+      opacity: 0;
+      transition: 0.3s;
+    }
+    .提示弹窗.显示 {
+      opacity: 1;
+    }
+    .隐藏 { display: none !important; }
+    .弹性布局 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    /* 手机适配 */
+    @media (max-width:768px) {
+      .侧边栏 { width: 200px; }
+      .双列布局 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="侧边栏">
+  <h3>📖 全提示词引擎</h3>
+  <div class="标签列表" id="标签列表"></div>
+</div>
+<div class="主区域" id="主区域"></div>
+<div class="提示弹窗" id="提示弹窗"></div>
+
+<script>
+// 全局配置
+const 系统配置 = {
+  数据库名: 'NovelWriterUltra',
+  默认接口地址: 'https://api.deepseek.com/v1',
+  默认模型: 'deepseek-v4-pro',
+  记忆分片大小: 15000,
+  最大分片数: 20,
+  过检合格分数: 5,
+  最大改写轮次: 5
+};
+
+// 本地存储工具
+const 本地存储 = {
+  获取(键, 默认值=null){
+    try{
+      const 值 = localStorage.getItem(键);
+      return 值 ? JSON.parse(值) : 默认值;
+    }catch{
+      return 默认值;
+    }
+  },
+  保存(键, 值){
+    try{
+      localStorage.setItem(键, JSON.stringify(值));
+      return true;
+    }catch{
+      return false;
+    }
+  }
+};
+
+// 简易选择器
+const 选 = 选择器 => document.querySelector(选择器);
+const 选所有 = 选择器 => document.querySelectorAll(选择器);
+
+// 弹窗提示
+const 消息提示 = {
+  显示(文字){
+    const 弹窗 = 选('#提示弹窗');
+    弹窗.textContent = 文字;
+    弹窗.classList.add('显示');
+    clearTimeout(弹窗.定时器);
+    弹窗.定时器 = setTimeout(()=>弹窗.classList.remove('显示'),2000);
+  }
+};
+
+// 统计纯汉字字数
+const 统计字数 = 文字 => 文字.replace(/\s/g,'').length;
+
+// 完整提示词库
+const 提示词库 = {
+  首章草稿: `准备写作：第 {章节编号} 章 "{章节标题}"
+章节定位：{章节角色}
+核心作用：{章节功能}
+悬念程度：{悬念密度}
+伏笔布置：{伏笔内容}
+剧情反转等级：{认知颠覆等级}
+章节梗概：{章节概要}
+
+可用创作元素：
+- 出场人物：{参与角色}
+- 关键道具：{关键物品}
+- 故事场景：{场景地点}
+- 时间限制：{时间压力}
+
+参考设定资料：
+- 小说整体设定：{小说设定}
+
+完成第 {章节编号} 章正文内容，要求字数 {目标字数} 字。
+必须设计2个以上富有张力的剧情场景：
+1. 对话场景：表面闲聊，实则暗中博弈，通过对话长短体现身份高低与权力变化。
+2. 动作场景：加入至少三种感官描写，短句加快节奏、长句渲染氛围，用动作暗示人物隐藏性格。
+3. 心理场景：描写人物内心矛盾与纠结，用隐喻呼应世界观设定，写出抉择前的内心挣扎。
+4. 环境场景：由远景切入近景，再聚焦异象，环境氛围随人物心境同步变化。
+
+格式要求：只输出章节正文，不要小标题、不要markdown格式。
+额外写作要求：{用户指导内容}`,
+
+  后续章节续写: `参考前文资料：
+└── 前情摘要：{全局摘要}
+└── 上一章结尾：{上章结尾片段}
+└── 用户写作要求：{用户指导内容}
+└── 人物当前状态：{角色状态}
+└── 本章简短梗概：{本章短概要}
+
+当前章节信息：
+第 {章节编号} 章 "{章节标题}"
+├── 章节定位：{章节角色}
+├── 核心作用：{章节功能}
+├── 悬念程度：{悬念密度}
+├── 伏笔布置：{伏笔内容}
+├── 剧情反转等级：{认知颠覆等级}
+├── 章节梗概：{章节概要}
+├── 要求字数：{目标字数} 字
+├── 出场人物：{参与角色}
+├── 关键道具：{关键物品}
+├── 故事场景：{场景地点}
+└── 时间限制：{时间压力}
+
+下一章预先大纲
+第 {下章编号} 章 "{下章标题}"
+├── 章节定位：{下章角色}
+├── 核心作用：{下章功能}
+├── 悬念程度：{下章悬念密度}
+├── 伏笔布置：{下章伏笔}
+└── 章节梗概：{下章概要}
+
+知识库参考内容：{关联记忆内容}
+
+创作规则：
+1. 优先使用写作技巧类内容，谨慎复用已有剧情设定，禁止照搬已写情节。
+2. 不能直接复制历史章节，只能参考节奏，情节必须改编30%以上。
+3. 与旧剧情相似度超过40%必须重写，20%-40%替换关键元素，低于20%可保留核心思路但换表达方式。
+
+严格按照以上设定续写第 {章节编号} 章，字数 {目标字数} 字，剧情连贯无漏洞，只输出正文，不加标题、不用markdown。`
+};
+
+// 侧边栏标签页面列表
+const 页面列表 = [
+  {id:'总控台',label:'🏠 总控台'},
+  {id:'人设库',label:'👤 人物设定'},
+  {id:'世界观',label:'🌍 世界设定'},
+  {id:'大纲',label:'📋 三层大纲'},
+  {id:'章节管理',label:'📚 章节管理'},
+  {id:'记忆库',label:'🧠 记忆库'},
+  {id:'写作',label:'✍️ 智能写作'},
+  {id:'风格',label:'🎨 风格定制'},
+  {id:'备份',label:'💾 备份恢复'}
+];
+
+// 初始化侧边导航
+function 初始化导航(){
+  const 列表容器 = 选('#标签列表');
+  列表容器.innerHTML = 页面列表.map(页 =>
+    `<button class="标签按钮" data页面="${页.id}">${页.label}</button>`
+  ).join('');
+  选所有('.标签按钮').forEach(按钮=>{
+    按钮.addEventListener('click',e=>切换页面(e.target.dataset页面));
+  });
+}
+
+// 切换页面
+function 切换页面(页面ID){
+  选所有('.标签按钮').forEach(btn=>{
+    btn.classList.toggle('激活',btn.dataset页面===页面ID);
+  });
+  const 主容器 = 选('#主区域');
+  主容器.innerHTML = '';
+  const 面板 = document.createElement('div');
+ 面板.className = '面板 激活';
+ 面板.id = '面板-'+页面ID;
+  主容器.appendChild(面板);
+
+  const 页面渲染器 = {
+    总控台:渲染总控台,
+    人设库:渲染人设库,
+    世界观:渲染世界观,
+    大纲:渲染大纲,
+    章节管理:渲染章节管理,
+    记忆库:渲染记忆库,
+    写作:渲染写作面板,
+    风格:渲染风格面板,
+    备份:渲染备份面板
+  };
+  if(页面渲染器[页面ID]) 页面渲染器[页面ID](面板);
+}
+
+// 调用AI接口
+async function 请求AI(接口地址,密钥,模型,系统词,用户词,最大字数=8000){
+  const 响应 = await fetch(`${接口地址}/chat/completions`,{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'Authorization':`Bearer ${密钥}`
+    },
+    body:JSON.stringify({
+      model:模型,
+      messages:[
+        {role:'system',content:系统词},
+        {role:'user',content:用户词}
+      ],
+      temperature:0.85,
+      max_tokens:最大字数
+    })
+  });
+  if(!响应.ok) throw new Error(`请求失败 状态码(${响应.status})`);
+  const 数据 = await 响应.json();
+  return 数据?.choices?.[0]?.message?.content||'';
+}
+
+// AI自评AI痕迹分数
+async function 文本自检评分(文本,接口地址,密钥,模型){
+  const 系统指令 = '你是专业AI文本检测员，给下面文字打0-100分，0分完全真人手写，100分明显AI生成，只返回一个数字整数。';
+  const 结果 = await 请求AI(接口地址,密钥,模型,系统指令,文本,40);
+  const 分数 = parseInt(结果)||50;
+  return Math.min(100,Math.max(0,分数));
+}
+
+// ========== 各个页面渲染 ==========
+function 渲染总控台(容器){
+  container.innerHTML=`<h3>🏠 小说总信息</h3>
+    <div class="双列布局">
+      <div class="表单项"><label>小说书名</label><input id="书名"></div>
+      <div class="表单项"><label>小说类型</label><input id="小说类型"></div>
+    </div>
+    <div class="表单项"><label>世界观简介</label><textarea id="世界简介"></textarea></div>
+    <div class="表单项"><label>整体文风基调</label><input id="文风基调"></div>
+    <button class="按钮" id="保存总控">保存信息</button>`;
+  选('#书名').value=本地存储.获取('书名','');
+  选('#小说类型').value=本地存储.获取('小说类型','');
+  选('#世界简介').value=本地存储.获取('世界简介','');
+  选('#文风基调').value=本地存储.获取('文风基调','');
+  选('#保存总控').onclick=()=>{
+    本地存储.保存('书名',选('#书名').value);
+    本地存储.保存('小说类型',选('#小说类型').value);
+    本地存储.保存('世界简介',选('#世界简介').value);
+    本地存储.保存('文风基调',选('#文风基调').value);
+    消息提示.显示('已保存小说信息');
+  };
+}
+
+function 渲染人设库(容器){
+  容器.innerHTML=`<h3>👤 人物设定库</h3>
+    <div id="人物列表"></div>
+    <button class="按钮 小按钮" id="新增人物">+ 新建人物</button>
+    <div class="卡片 隐藏" id="人物编辑框">
+      <div class="双列布局">
+        <div class="表单项"><label>人物姓名</label><input id="人物姓名"></div>
+        <div class="表单项"><label>修为境界</label><input id="人物境界"></div>
+      </div>
+      <div class="表单项"><label>性格特点</label><input id="人物性格"></div>
+      <div class="表单项"><label>弱点软肋</label><input id="人物弱点"></div>
+      <button class="按钮" id="保存人物">保存设定</button>
+    </div>`;
+  let 当前编辑下标=null;
+  function 刷新人物列表(){
+    const 人物数组=本地存储.获取('人物设定',[]);
+    选('#人物列表').innerHTML=人物数组.map((人物,下标)=>`
+      <div class="列表项">
+        <span><strong>${人物.姓名}</strong> <span class="标签角标">${人物.境界||'未知'}</span></span>
+        <div>
+          <button class="按钮 小按钮 编辑人物" data下标="${下标}">编辑</button>
+          <button class="按钮 小按钮 危险按钮 删除人物" data下标="${下标}">删除</button>
+        </div>
+      </div>`).join('');
+    选所有('.编辑人物').forEach(btn=>btn.onclick=()=>{
+      const 人物=人物数组[btn.dataset下标];
+      当前编辑下标=btn.dataset下标;
+      选('#人物姓名').value=人物.姓名;
+      选('#人物境界').value=人物.境界;
+      选('#人物性格').value=人物.性格;
+      选('#人物弱点').value=人物.弱点||'';
+      选('#人物编辑框').classList.remove('隐藏');
+    });
+    选所有('.删除人物').forEach(btn=>btn.onclick=()=>{
+      if(!confirm('确定删除该人物设定？'))return;
+      人物数组.splice(btn.dataset下标,1);
+      本地存储.保存('人物设定',人物数组);
+      刷新人物列表();
+    });
+  }
+  刷新人物列表();
+  选('#新增人物').onclick=()=>{
+    当前编辑下标=null;
+    选('#人物姓名').value='';
+    选('#人物境界').value='';
+    选('#人物性格').value='';
+    选('#人物弱点').value='';
+    选('#人物编辑框').classList.remove('隐藏');
+  };
+  选('#保存人物').onclick=()=>{
+    const 姓名=选('#人物姓名').value.trim();
+    if(!姓名)return 消息提示.显示('请输入人物姓名');
+    const 新人物={
+      姓名,
+      境界:选('#人物境界').value,
+      性格:选('#人物性格').value,
+      弱点:选('#人物弱点').value
+    };
+    let 人物数组=本地存储.获取('人物设定',[]);
+    当前编辑下标!==null?人物数组[当前编辑下标]=新人物:人物数组.push(新人物);
+    本地存储.保存('人物设定',人物数组);
+    选('#人物编辑框').classList.add('隐藏');
+    刷新人物列表();
+    消息提示.显示('人物设定已保存');
+  };
+}
+
+function 渲染世界观(容器){
+  容器.innerHTML=`<h3>🌍 世界修炼设定</h3>
+    <div class="表单项"><label>修炼等级体系</label><textarea id="修炼体系"></textarea></div>
+    <div class="表单项"><label>世界规则铁律</label><textarea id="世界规则"></textarea></div>
+    <button class="按钮" id="保存世界">保存设定</button>`;
+  选('#修炼体系').value=本地存储.获取('修炼体系','');
+  选('#世界规则').value=本地存储.获取('世界规则','');
+  选('#保存世界').onclick=()=>{
+    本地存储.保存('修炼体系',选('#修炼体系').value);
+    本地存储.保存('世界规则',选('#世界规则').value);
+    消息提示.显示('世界设定已保存');
+  };
+}
+
+function 渲染大纲(容器){
+  容器.innerHTML=`<h3>📋 三层剧情大纲</h3>
+    <div class="表单项"><label>全书总纲</label><textarea id="全书总纲"></textarea></div>
+    <div class="表单项"><label>分卷卷纲</label><textarea id="分卷大纲"></textarea></div>
+    <button class="按钮 小按钮" id="拆分章纲">自动拆分为章纲</button>
+    <div class="记忆盒子" id="章节大纲结果"></div>`;
+  选('#全书总纲').value=本地存储.获取('全书总纲','');
+  选('#分卷大纲').value=本地存储.获取('分卷大纲','');
+  const 保存的章纲=本地存储.获取('章节大纲结果','');
+  if(保存的章纲)选('#章节大纲结果').innerText=保存的章纲;
+  选('#拆分章纲').onclick=()=>{
+    const 卷纲内容=选('#分卷大纲').value.trim();
+    if(!卷纲内容)return 消息提示.显示('请先填写分卷大纲');
+    const 行数组=卷纲内容.split(/[；。\n]/).filter(x=>x.trim());
+    const 结果=行数组.map((内容,序号)=>`第${序号+1}章：${内容}`).join('\n');
+    选('#章节大纲结果').innerText=结果;
+    本地存储.保存('章节大纲结果',结果);
+    消息提示.显示('已自动拆分章节大纲');
+  };
+}
+
+function 渲染章节管理(容器){
+  容器.innerHTML=`<h3>📚 章节与分卷管理</h3>
+    <div class="弹性布局">
+      <button class="按钮 小按钮" id="新增分卷">+ 新建分卷</button>
+      <button class="按钮 小按钮" id="导出全文">导出TXT全文</button>
+    </div>
+    <div class="记忆盒子" id="分卷章节列表"></div>`;
+  function 刷新章节列表(){
+    const 分卷数组=本地存储.获取('分卷列表',[]);
+    const 章节数组=本地存储.获取('章节列表',[]);
+    let 展示文字='';
+    分卷数组.forEach(分卷=>{
+      展示文字+=`📁 ${分卷.卷名}\n`;
+      章节数组.filter(章=>章.分卷ID===分卷.id).forEach((章节,idx)=>{
+        展示文字+=`  ${idx+1}. ${章节.标题} 【${统计字数(章节.内容||'')}字】\n`;
+      });
+      展示文字+='\n';
+    });
+    选('#分卷章节列表').innerHTML=展示文字||'暂无分卷和章节';
+  }
+  刷新章节列表();
+  选('#新增分卷').onclick=()=>{
+    const 卷名=prompt('请输入分卷名称：');
+    if(!卷名)return;
+    let 分卷数组=本地存储.获取('分卷列表',[]);
+    分卷数组.push({id:Date.now().toString(),卷名:卷名});
+    本地存储.保存('分卷列表',分卷数组);
+    刷新章节列表();
+    消息提示.显示('分卷创建成功');
+  };
+  选('#导出全文').onclick=()=>{
+    const 分卷数组=本地存储.获取('分卷列表',[]);
+    const 章节数组=本地存储.获取('章节列表',[]);
+    let 全文='';
+    分卷数组.forEach(分卷=>{
+      全文+=`\n===== ${分卷.卷名} =====\n`;
+      章节数组.filter(章=>章.分卷ID===分卷.id).forEach(章节=>{
+        全文+=`## ${章节.标题}\n\n${章节.内容}\n\n`;
+      });
+    });
+    const blob=new Blob(['\uFEFF'+全文],{type:'text/plain;charset=utf-8'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='小说全文.txt';
+    a.click();
+  };
+}
+
+function 渲染记忆库(容器){
+  容器.innerHTML=`<h3>🧠 长篇记忆上下文库</h3>
+    <textarea id="全文粘贴框" rows="6" placeholder="把已写小说全文粘贴到这里"></textarea>
+    <div class="弹性布局">
+      <button class="按钮 小按钮" id="载入记忆分片">生成分片记忆</button>
+      <button class="按钮 小按钮 危险按钮" id="清空记忆">清空记忆库</button>
+    </div>
+    <div class="记忆盒子" id="记忆状态">${本地存储.获取('记忆分片',[]).length?'已载入 '+本地存储.获取('记忆分片',[]).length+' 个记忆片段':'暂无记忆数据'}</div>
+    <div class="表单项" style="margin-top:10px">
+      <label>前情全局摘要</label>
+      <textarea id="全局摘要框"></textarea>
+    </div>
+    <button class="按钮 小按钮" id="AI生成摘要">🤖 AI自动生成前情摘要</button>`;
+  选('#载入记忆分片').onclick=()=>{
+    const 全文=选('#全文粘贴框').value.trim();
+    if(!全文)return 消息提示.显示('请先粘贴小说全文');
+    let 分片数组=[];
+    for(let i=0;i<全文.length&&分片数组.length<系统配置.最大分片数;i+=系统配置.记忆分片大小){
+      分片数组.push(全文.slice(i,i+系统配置.记忆分片大小));
+    }
+    本地存储.保存('记忆分片',分片数组);
+    选('#记忆状态').innerText=`已载入 ${分片数组.length} 个记忆片段`;
+    消息提示.显示('记忆分片载入成功');
+  };
+  选('#清空记忆').onclick=()=>{
+    本地存储.保存('记忆分片',[]);
+    选('#记忆状态').innerText='暂无记忆数据';
+    消息提示.显示('记忆库已清空');
+  };
+  选('#全局摘要框').value=本地存储.获取('全局摘要','');
+  选('#全局摘要框').oninput=e=>本地存储.保存('全局摘要',e.target.value);
+  选('#AI生成摘要').onclick=async ()=>{
+    const 章节数组=本地存储.获取('章节列表',[]);
+    const 合并章节=章节数组.map(c=>c.内容).join('\n');
+    if(!合并章节)return 消息提示.显示('暂无已保存章节内容');
+    const 接口配置=获取接口信息();
+    if(!接口配置.密钥)return 消息提示.显示('请先在写作面板填写API密钥');
+    选('#AI生成摘要').disabled=true;
+    try{
+      const 系统指令='你是资深网文编辑，根据下面已写章节，生成800字以内精炼前情摘要，包含主角、关键剧情、世界观，只输出摘要正文。';
+      const 摘要结果=await 请求AI(接口配置.地址,接口配置.密钥,接口配置.模型,系统指令,合并章节.slice(0,4000),600);
+      选('#全局摘要框').value=摘要结果;
+      本地存储.保存('全局摘要',摘要结果);
+      消息提示.显示('前情摘要生成完成');
+    }catch(e){
+      消息提示.显示('生成失败：'+e.message);
+    }finally{
+      选('#AI生成摘要').disabled=false;
+    }
+  };
+}
+
+function 渲染写作面板(容器){
+  container.innerHTML=`<h3>✍️ 智能章节写作引擎</h3>
+    <div class="双列布局">
+      <div class="表单项"><label>接口地址</label><input id="接口地址" placeholder="${系统配置.默认接口地址}"></div>
+      <div class="表单项"><label>密钥Key</label><input type="password" id="接口密钥"></div>
+    </div>
+    <div class="表单项"><label>模型名称</label><input id="模型名称" placeholder="${系统配置.默认模型}"></div>
+    <div class="表单项"><label>当前章节编号</label><input id="当前章节号" placeholder="1" value="1"></div>
+    <div class="表单项"><label>本章剧情大纲</label><textarea id="本章大纲框" rows="5" placeholder="填写本章剧情、人物冲突、伏笔、结局钩子"></textarea></div>
+    <div class="双列布局">
+      <div class="表单项"><label>目标字数</label><input id="目标字数框" type="number" value="2200"></div>
+      <div class="表单项"><label>章节标题</label><input id="章节标题框" placeholder="输入本章标题"></div>
+    </div>
+    <div class="表单项"><label>结尾悬念钩子</label><input id="结尾钩子框" placeholder="设置本章结尾悬念"></div>
+    <div class="弹性布局">
+      <button class="按钮" id="生成正文按钮">✨ 一键生成章节</button>
+      <button class="按钮" id="真人化改写按钮" style="background:#b85e1e;">🔄 AI过检真人改写</button>
+    </div>
+    <textarea id="生成结果框" rows="16" placeholder="AI生成的章节内容会显示在这里"></textarea>
+    <button class="按钮 小按钮" id="采纳章节按钮">✅ 保存采纳为本章内容</button>
+    <div class="卡片">
+      <h4>📋 过检改写日志</h4>
+      <div class="记忆盒子" id="过检日志框"></div>
+    </div>`;
+
+  选('#接口地址').value=本地存储.获取('接口地址',系统配置.默认接口地址);
+  选('#模型名称').value=本地存储.获取('模型名称',系统配置.默认模型);
+  选('#接口密钥').value=本地存储.获取('接口密钥','');
+  选('#当前章节号').value=本地存储.获取('当前章节号','1');
+
+  ['接口地址','模型名称','接口密钥','当前章节号'].forEach(id=>{
+    选('#'+id).oninput=e=>本地存储.保存(id,e.target.value);
+  });
+
+  function 获取接口信息(){
+    return {
+      地址:选('#接口地址').value.trim()||系统配置.默认接口地址,
+      密钥:选('#接口密钥').value.trim(),
+      模型:选('#模型名称').value.trim()||系统配置.默认模型
+    };
+  }
+
+  // 组装完整提示词
+  function 组装写作提示词(字数){
+    const 文风预设=本地存储.获取('文风预设','齐天热血');
+    const 修炼设定=本地存储.获取('修炼体系','');
+    const 世界规则=本地存储.获取('世界规则','');
+    const 人物数组=本地存储.获取('人物设定',[]);
+    const 人物简介=人物数组.map(p=>`${p.姓名}(${p.境界||'未知'})，性格：${p.性格}，弱点：${p.弱点||'无'}`).join('；');
+    const 全局摘要=本地存储.获取('全局摘要','');
+    const 记忆分片=本地存储.获取('记忆分片',[]);
+    const 本章大纲=选('#本章大纲框').value.trim();
+    const 章节号=选('#当前章节号').value||'1';
+    const 章节标题=选('#章节标题框').value||`第${章节号}章`;
+    const 结尾钩子=选('#结尾钩子框').value||'';
+
+    // 基础设定
+    let 基础设定=`你是专业网文作家，严格按照下面设定创作。\n`;
+    if(修炼设定) 基础设定+=`修炼体系：${修炼设定}\n`;
+    if(世界规则) 基础设定+=`世界铁律：${世界规则}\n`;
+    if(人物简介) 基础设定+=`出场人物：${人物简介}\n`;
+    if(全局摘要) 基础设定+=`前文剧情摘要：${全局摘要}\n`;
+    if(记忆分片.length){
+      const 取用记忆=记忆分片.slice(0,3).join('\n');
+      基础设定+=`关联历史剧情参考：${取用记忆}\n`;
+    }
+
+    // 文风风格
+    if(文风预设==='齐天热血'){
+      基础设定+=`写作风格：热血霸气、台词铿锵、节奏飞快、冲突直接、正邪分明。\n`;
+    }else if(文风预设==='冷笔白描'){
+      基础设定+=`写作风格：只用陈述句、不用情绪形容词、短句白描、大事淡写、半文半白。\n`;
+    }else if(文风预设==='辰东玄幻'){
+      基础设定+=`写作风格：意境苍凉、伏笔深远、格局宏大、张弛有度。\n`;
+    }
+
+    // 选择模板
+    let 模板内容;
+    if(全局摘要){
+      模板内容=提示词库.后续章节续写;
+    }else{
+      模板内容=提示词库.首章草稿;
+    }
+
+    // 替换变量
+    const 变量表={
+      '{章节编号}':章节号,
+      '{章节标题}':章节标题,
+      '{章节角色}':'主线剧情推进',
+      '{章节功能}':'推进主线、升级冲突、埋下伏笔',
+      '{悬念密度}':'高',
+      '{伏笔内容}':'暗藏后续剧情转折线索',
+      '{认知颠覆等级}':'★★★☆☆',
+      '{章节概要}':本章大纲,
+      '{参与角色}':人物数组.map(p=>p.姓名).join('、'),
+      '{关键物品}':'祖传信物、秘境古物',
+      '{场景地点}':'宗门、古城、秘境山林',
+      '{时间压力}':'当夜/三日之内',
+      '{小说设定}':`${修炼设定}\n${世界规则}`,
+      '{用户指导内容}':本章大纲,
+      '{目标字数}':字数,
+      '{全局摘要}':全局摘要||'无',
+      '{上章结尾片段}':'',
+      '{角色状态}':人物简介,
+      '{本章短概要}':本章大纲,
+      '{关联记忆内容}':'',
+      '{下章编号}':String(parseInt(章节号)+1),
+      '{下章标题}':'',
+      '{下章角色}':'',
+      '{下章功能}':'',
+      '{下章悬念密度}':'',
+      '{下章伏笔}':'',
+      '{下章概要}':''
+    };
+
+    let 填充后=模板内容;
+    for(const [key,val] of Object.entries(变量表)){
+      填充后=填充后.replace(new RegExp(key.replace(/[{}]/g,'\\$&'),'g'),val);
+    }
+
+    return 基础设定+填充后+(结尾钩子?`\n本章结尾必须保留悬念钩子：${结尾钩子}`:'');
+  }
+
+  // 生成章节
+  选('#生成正文按钮').onclick=async ()=>{
+    const 大纲=选('#本章大纲框').value.trim();
+    if(!大纲)return 消息提示.显示('请填写本章剧情大纲');
+    const 接口=获取接口信息();
+    if(!接口.密钥)return 消息提示.显示('请填写API密钥');
+    选('#生成正文按钮').disabled=true;
+    try{
+      const 字数=parseInt(选('#目标字数框').value)||2200;
+      const 系统提示=组装写作提示词(字数);
+      const 结果=await 请求AI(接口.地址,接口.密钥,接口.模型,系统提示,大纲,Math.min(Math.ceil(字数*2.2),8000));
+      选('#生成结果框').value=结果;
+      消息提示.显示(`生成完成，当前字数：${统计字数(结果)}`);
+    }catch(e){
+      消息提示.显示('生成失败：'+e.message);
+    }finally{
+      选('#生成正文按钮').disabled=false;
+    }
+  };
+
+  // 过检真人化改写
+  选('#真人化改写按钮').onclick=async ()=>{
+    const 原文=选('#生成结果框').value.trim();
+    if(!原文)return 消息提示.显示('请先生成章节内容');
+    const 接口=获取接口信息();
+    选('#真人化改写按钮').disabled=true;
+    let 文本=原文;
+    let 日志=`初稿字数：${统计字数(文本)}\n`;
+    for(let i=1;i<=系统配置.最大改写轮次;i++){
+      const 分数=await 文本自检评分(文本,接口.地址,接口.密钥,接口.模型);
+      日志+=`第${i}轮检测：AI嫌疑分数 ${分数}/100\n`;
+      if(分数<=系统配置.过检合格分数){
+        日志+='✅ 已达到真人文本标准，停止改写';
+        break;
+      }
+      if(i<系统配置.最大改写轮次){
+        日志+='🔄 正在真人化改写去AI痕迹...\n';
+        const 改写指令='你是资深网文作者，把下面文字彻底改成真人手写风格，去掉AI套话、增加细节、保留原有剧情，语句自然不机械。';
+        文本=await 请求AI(接口.地址,接口.密钥,接口.模型,改写指令,文本,8000);
+      }else{
+        日志+='⚠️ 已达到最大改写轮次';
+      }
+    }
+    选('#过检日志框').innerText=日志;
+    选('#生成结果框').value=文本;
+    消息提示.显示('过检真人化改写完成');
+    选('#真人化改写按钮').disabled=false;
+  };
+
+  // 采纳保存章节
+  选('#采纳章节按钮').onclick=()=>{
+    const 内容=选('#生成结果框').value.trim();
+    if(!内容)return 消息提示.显示('暂无章节内容可保存');
+    let 章节数组=本地存储.获取('章节列表',[]);
+    if(!章节数组.length){
+      本地存储.保存('分卷列表',[{id:'v1',卷名:'第一卷'}]);
+      章节数组.push({id:'c1',title:'第1章',分卷ID:'v1',内容:''});
+    }
+    章节数组[0].内容+='\n'+内容;
+    本地存储.保存('章节列表',章节数组);
+    消息提示.显示('已保存到章节列表');
+  };
+}
+
+function 渲染风格面板(容器){
+  容器.innerHTML=`<h3>🎨 写作风格定制</h3>
+    <div class="表单项">
+      <label>预设文风</label>
+      <select id="文风选择">
+        <option value="齐天热血">齐天氏·热血祖魂</option>
+        <option value="辰东玄幻">辰东·宏大苍凉玄幻</option>
+        <option value="冷笔白描">冷笔白描·极简写实</option>
+      </select>
+    </div>
+    <div class="表单项"><label>自定义额外文风要求</label><textarea id="自定义文风"></textarea></div>
+    <button class="按钮" id="保存文风">保存风格设置</button>`;
+  选('#文风选择').value=本地存储.获取('文风预设','齐天热血');
+  选('#自定义文风').value=本地存储.获取('自定义文风','');
+  选('#保存文风').onclick=()=>{
+    本地存储.保存('文风预设',选('#文风选择').value);
+    本地存储.保存('自定义文风',选('#自定义文风').value);
+    消息提示.显示('文风设置已保存');
+  };
+}
+
+function 渲染备份面板(容器){
+  容器.innerHTML=`<h3>💾 数据备份与恢复</h3>
+    <div class="弹性布局">
+      <button class="按钮" id="导出备份">导出全部数据备份</button>
+      <button class="按钮" id="导入备份">从备份文件恢复</button>
+    </div>
+    <input type="file" id="备份文件选择" style="display:none" accept=".json">`;
+  选('#导出备份').onclick=()=>{
+    const 备份数据={};
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      备份数据[key]=本地存储.获取(key);
+    }
+    const blob=new Blob([JSON.stringify(备份数据,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='网文创作中枢_完整备份.json';
+    a.click();
+    消息提示.显示('备份文件已下载');
+  };
+  选('#导入备份').onclick=()=>选('#备份文件选择').click();
+  选('#备份文件选择').onchange=e=>{
+    const 文件=e.target.files[0];
+    if(!文件)return;
+    const 读取器=new FileReader();
+    读取器.onload=ev=>{
+      try{
+        const 恢复数据=JSON.parse(ev.target.result);
+        localStorage.clear();
+        Object.entries(恢复数据).forEach(([k,v])=>本地存储.保存(k,v));
+        消息提示.显示('数据恢复成功，请刷新页面');
+      }catch(ex){
+        消息提示.显示('备份文件格式错误');
+      }
+    };
+    读取器.readAsText(文件);
+  };
+}
+
+// 页面入口启动
+初始化导航();
+document.querySelector('.标签按钮')?.click();
+消息提示.显示('网文创作中枢 已启动完毕');
+</script>
+</body>
+</html>
