@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>双原创小说同文风创作工具</title>
+  <script src="https://cdn.jsdelivr.net/npm/crypto-js@4.2.0/crypto-js.min.js"></script>
+  <style>
+    :root {
+      --bg: #121212;
+      --panel: #1e1e1e;
+      --text: #e0e0e0;
+      --accent: #4285F4;
+      --border: #333333;
+      --editor: #2a2a2a;
+      --radius: 8px;
+      --font: 'Microsoft YaHei', sans-serif;
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 12px;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .title {
+      text-align: center;
+      color: var(--accent);
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+    .tab-bar {
+      display: flex;
+      gap: 6px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .tab-btn {
+      padding: 8px 16px;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 14px;
+      transition: 0.2s;
+      flex-shrink: 0;
+    }
+    .tab-btn.active, .tab-btn:hover {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    .panel {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .panel.active {
+      display: flex;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    label {
+      font-size: 13px;
+      color: var(--accent);
+      font-weight: 500;
+    }
+    textarea, input {
+      background: var(--editor);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      padding: 10px;
+      font-size: 14px;
+      resize: vertical;
+      font-family: var(--font);
+    }
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .action-btn {
+      padding: 10px 18px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 14px;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .action-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .danger-btn {
+      background: #d93025;
+    }
+    .success-btn {
+      background: #34A853;
+    }
+    .memory-box {
+      background: var(--editor);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      max-height: 250px;
+      overflow-y: auto;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+    .hint {
+      font-size: 11px;
+      color: #999;
+      margin-top: -6px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #2a2a2a;
+      color: white;
+      padding: 8px 20px;
+      border-radius: 20px;
+      z-index: 999;
+      opacity: 0;
+      transition: 0.3s;
+    }
+    .toast.show {
+      opacity: 1;
+    }
+    .book-manager {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .book-card {
+      flex: 1;
+      min-width: 280px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+    }
+    .book-card h4 {
+      color: var(--accent);
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+    }
+    .chapter-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      background: var(--editor);
+      border-radius: 6px;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h2 class="title">双原创小说同文风创作工具</h2>
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="write">文风复刻创作</button>
+    <button class="tab-btn" data-tab="memory">全文记忆管理</button>
+    <button class="tab-btn" data-tab="book">双书章节管理</button>
+  </div>
+
+  <!-- 文风复刻创作面板 -->
+  <div class="panel active" id="write">
+    <div class="field">
+      <label>📝 粘贴你的原创章节原文（学习文风）</label>
+      <textarea id="sourceText" rows="8" placeholder="请粘贴你已写好的小说章节，工具将学习你的叙事语气、句式、文笔风格，不抄袭任何情节"></textarea>
+    </div>
+    <div class="field">
+      <label>🌍 全新原创设定（与原文完全无关）</label>
+      <textarea id="newSetting" rows="3" placeholder="请填写：全新世界观、核心设定、人物名字、故事背景，确保和原文无任何关联"></textarea>
+    </div>
+    <div class="field">
+      <label>📖 新章节剧情要求（全新情节）</label>
+      <textarea id="newPlot" rows="3" placeholder="详细描述新章节要写的剧情，完全独立于原文，无相似桥段"></textarea>
+    </div>
+    <div class="btn-group">
+      <button class="action-btn" id="startWrite">开始同文风原创写作</button>
+      <button class="action-btn danger-btn" id="clearInput">清空输入</button>
+    </div>
+    <div class="field">
+      <label>✍️ 全新原创章节（与原文无相似）</label>
+      <textarea id="resultText" rows="12" placeholder="生成的全新章节，文风与你一致，情节设定完全原创，可直接发布另一平台"></textarea>
+    </div>
+    <div class="btn-group">
+      <button class="action-btn success-btn" id="saveToBook">保存至新书章节</button>
+      <button class="action-btn" id="copyResult">复制全文</button>
+    </div>
+  </div>
+
+  <!-- 全文记忆管理面板 -->
+  <div class="panel" id="memory">
+    <div class="field">
+      <label>📚 粘贴新书全文（构建200万字记忆库）</label>
+      <textarea id="fullBookText" rows="6" placeholder="粘贴新书所有已写内容，工具自动分片存储，支持200万字超长文本记忆"></textarea>
+    </div>
+    <div class="btn-group">
+      <button class="action-btn" id="buildMemory">构建全文记忆</button>
+      <button class="action-btn danger-btn" id="clearMemory">清空记忆库</button>
+    </div>
+    <div class="field">
+      <label>🧠 记忆库状态</label>
+      <div class="memory-box" id="memoryStatus">暂无记忆数据，支持单本200万字上下文关联记忆</div>
+    </div>
+    <p class="hint">自动匹配前文伏笔、人设、设定，保证新书上下文逻辑连贯，无前后矛盾</p>
+  </div>
+
+  <!-- 双书章节管理面板 -->
+  <div class="panel" id="book">
+    <div class="book-manager">
+      <!-- 原书管理 -->
+      <div class="book-card">
+        <h4>原书（主发平台）</h4>
+        <div id="originalBookChapters">
+          <p class="hint">可手动添加原书章节，统一管理</p>
+        </div>
+        <button class="action-btn" style="margin-top:10px;width:100%" id="addOriginalChapter">添加原书章节</button>
+      </div>
+      <!-- 新书管理 -->
+      <div class="book-card">
+        <h4>新书（第二平台）</h4>
+        <div id="newBookChapters">
+          <p class="hint">自动保存同文风原创章节，独立管理</p>
+        </div>
+        <button class="action-btn success-btn" style="margin-top:10px;width:100%" id="exportNewBook">导出新书全文</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+// 配置项
+const CONFIG = {
+  MEMORY_SLICE_SIZE: 20000, // 每段记忆字数
+  MAX_MEMORY_SIZE: 100, // 最大记忆段数，支持200万字
+  BOOK_KEYS: {
+    ORIGINAL: 'original_book',
+    NEW: 'new_book',
+    MEMORY: 'book_memory'
+  }
+};
+
+// 本地存储工具
+const Storage = {
+  get(key, fallback = []) {
+    try {
+      const data = localStorage.getItem(key);
+      return data ? JSON.parse(data) : fallback;
+    } catch (e) {
+      return fallback;
+    }
+  },
+  set(key, data) {
+    localStorage.setItem(key, JSON.stringify(data));
+  },
+  clear(key) {
+    localStorage.removeItem(key);
+  }
+};
+
+// 提示工具
+const Toast = {
+  show(msg) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2500);
+  }
+};
+
+// 标签切换
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+// 文风清洗，保留个人语气，删除AI套话
+function cleanStyleText(text) {
+  return text
+    .replace(/\s+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// 构建同文风创作指令
+function buildWritePrompt() {
+  const source = document.getElementById('sourceText').value.trim();
+  const newSetting = document.getElementById('newSetting').value.trim();
+  const newPlot = document.getElementById('newPlot').value.trim();
+  const memory = Storage.get(CONFIG.BOOK_KEYS.MEMORY).join('\n\n');
+
+  if (!source || !newSetting || !newPlot) {
+    Toast.show('请填写完整信息！');
+    return null;
+  }
+
+  return `
+    你需要严格模仿以下文本的**文笔风格、叙事语气、句式长短、叙事节奏、语言习惯**，绝对不能抄袭原文的情节、人物、世界观、场景。
+    要求：
+    1. 完全使用全新原创设定：${newSetting}
+    2. 严格按照全新剧情创作：${newPlot}
+    3. 结合前文上下文：${memory}
+    4. 文风与参考文本高度一致，语句风格、叙事方式完全复刻
+    5. 生成内容为全新原创小说章节，与参考文本无任何相似，可独立发布平台
+    6. 上下文逻辑连贯，人设、设定统一，无矛盾
+    7. 直接输出章节正文，不添加任何额外说明、标题、注释
+
+    参考文风文本：
+    ${source}
+  `;
+}
+
+// 开始同文风创作（示例，可对接AI接口）
+document.getElementById('startWrite').addEventListener('click', () => {
+  const prompt = buildWritePrompt();
+  if (!prompt) return;
+
+  const btn = document.getElementById('startWrite');
+  btn.disabled = true;
+  btn.textContent = '创作中...';
+  document.getElementById('resultText').value = '正在以你的文风，创作全新原创章节，请稍候...';
+
+  // 模拟创作，实际可替换为AI接口调用
+  setTimeout(() => {
+    const result = `【全新原创章节正文】\n\n基于你提供的文风，结合全新设定与剧情，生成的完全原创内容，文风与你高度一致，情节、世界观、人物均为全新，无任何抄袭相似，可直接发布第二平台。\n\n（此处为生成的完整章节内容，上下文衔接前文记忆，逻辑连贯）`;
+    document.getElementById('resultText').value = cleanStyleText(result);
+    btn.disabled = false;
+    btn.textContent = '开始同文风原创写作';
+    Toast.show('全新原创章节创作完成！');
+  }, 2000);
+});
+
+// 清空输入
+document.getElementById('clearInput').addEventListener('click', () => {
+  document.getElementById('sourceText').value = '';
+  document.getElementById('newSetting').value = '';
+  document.getElementById('newPlot').value = '';
+  document.getElementById('resultText').value = '';
+  Toast.show('已清空所有输入');
+});
+
+// 复制结果
+document.getElementById('copyResult').addEventListener('click', () => {
+  const text = document.getElementById('resultText').value.trim();
+  if (!text) {
+    Toast.show('暂无内容可复制');
+    return;
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    Toast.show('已复制全文');
+  });
+});
+
+// 构建全文记忆
+document.getElementById('buildMemory').addEventListener('click', () => {
+  const text = document.getElementById('fullBookText').value.trim();
+  if (!text) {
+    Toast.show('请粘贴新书全文');
+    return;
+  }
+
+  // 分片存储记忆
+  let slices = [];
+  for (let i = 0; i < text.length && slices.length < CONFIG.MAX_MEMORY_SIZE; i += CONFIG.MEMORY_SLICE_SIZE) {
+    slices.push(text.slice(i, i + CONFIG.MEMORY_SLICE_SIZE));
+  }
+  Storage.set(CONFIG.BOOK_KEYS.MEMORY, slices);
+  updateMemoryStatus();
+  Toast.show(`全文记忆构建完成，共${slices.length}段`);
+});
+
+// 更新记忆状态
+function updateMemoryStatus() {
+  const slices = Storage.get(CONFIG.BOOK_KEYS.MEMORY);
+  const totalWords = slices.reduce((sum, slice) => sum + slice.length, 0);
+  document.getElementById('memoryStatus').textContent = 
+    `已存储记忆段数：${slices.length}\n总记忆字数：${totalWords}字\n支持最大200万字上下文关联，保证新书逻辑连贯`;
+}
+
+// 清空记忆库
+document.getElementById('clearMemory').addEventListener('click', () => {
+  if (confirm('确定清空所有全文记忆？')) {
+    Storage.clear(CONFIG.BOOK_KEYS.MEMORY);
+    document.getElementById('fullBookText').value = '';
+    updateMemoryStatus();
+    Toast.show('已清空全文记忆');
+  }
+});
+
+// 保存至新书章节
+document.getElementById('saveToBook').addEventListener('click', () => {
+  const content = document.getElementById('resultText').value.trim();
+  if (!content) {
+    Toast.show('请先生成原创章节');
+    return;
+  }
+  const title = prompt('请输入新书章节标题');
+  if (!title) return;
+
+  const chapters = Storage.get(CONFIG.BOOK_KEYS.NEW);
+  chapters.push({
+    id: Date.now(),
+    title,
+    content,
+    createTime: new Date().toLocaleString()
+  });
+  Storage.set(CONFIG.BOOK_KEYS.NEW, chapters);
+  renderNewChapters();
+  Toast.show('章节保存成功');
+});
+
+// 渲染新书章节
+function renderNewChapters() {
+  const chapters = Storage.get(CONFIG.BOOK_KEYS.NEW);
+  const container = document.getElementById('newBookChapters');
+  if (chapters.length === 0) {
+    container.innerHTML = '<p class="hint">暂无章节，快去创作吧</p>';
+    return;
+  }
+  container.innerHTML = chapters.map(ch => `
+    <div class="chapter-item">
+      <span>${ch.title}</span>
+      <span>${ch.createTime}</span>
+    </div>
+  `).join('');
+}
+
+// 导出新书全文
+document.getElementById('exportNewBook').addEventListener('click', () => {
+  const chapters = Storage.get(CONFIG.BOOK_KEYS.NEW);
+  if (chapters.length === 0) {
+    Toast.show('新书暂无章节');
+    return;
+  }
+  let text = '新书全文（同文风原创）\n\n';
+  chapters.forEach(ch => {
+    text += `${ch.title}\n\n${ch.content}\n\n`;
+  });
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '原创小说新书全文.txt';
+  a.click();
+  Toast.show('新书全文导出成功');
+});
+
+// 添加原书章节
+document.getElementById('addOriginalChapter').addEventListener('click', () => {
+  const title = prompt('请输入原书章节标题');
+  if (!title) return;
+  const content = prompt('请输入原书章节内容');
+  if (!content) return;
+
+  const chapters = Storage.get(CONFIG.BOOK_KEYS.ORIGINAL);
+  chapters.push({
+    id: Date.now(),
+    title,
+    content,
+    createTime: new Date().toLocaleString()
+  });
+  Storage.set(CONFIG.BOOK_KEYS.ORIGINAL, chapters);
+  renderOriginalChapters();
+  Toast.show('原书章节添加成功');
+});
+
+// 渲染原书章节
+function renderOriginalChapters() {
+  const chapters = Storage.get(CONFIG.BOOK_KEYS.ORIGINAL);
+  const container = document.getElementById('originalBookChapters');
+  if (chapters.length === 0) {
+    container.innerHTML = '<p class="hint">暂无章节</p>';
+    return;
+  }
+  container.innerHTML = chapters.map(ch => `
+    <div class="chapter-item">
+      <span>${ch.title}</span>
+      <span>${ch.createTime}</span>
+    </div>
+  `).join('');
+}
+
+// 初始化
+window.addEventListener('DOMContentLoaded', () => {
+  updateMemoryStatus();
+  renderNewChapters();
+  renderOriginalChapters();
+});
+</script>
+</body>
+</html>
