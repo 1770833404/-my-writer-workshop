@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI_NovelGenerator · 复刻版 V1.4.4</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: -apple-system, BlinkMacSystemFont, "微软雅黑", sans-serif;
+            padding: 15px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #38bdf8;
+            margin-bottom: 20px;
+            font-size: 22px;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 10px;
+            padding: 18px;
+            margin-bottom: 15px;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: #e2e8f0;
+            padding: 12px;
+            border-radius: 8px;
+            resize: none;
+            margin: 8px 0;
+            font-size: 16px;
+            line-height: 1.7;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+        }
+        .btn-primary {
+            background: #0ea5e9;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #0284c7;
+        }
+        .btn-secondary {
+            background: #334155;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background: #475569;
+        }
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+        .row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin: 10px 0;
+        }
+        select, input {
+            padding: 9px;
+            background: #0f172a;
+            color: #e2e8f0;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            font-size: 15px;
+        }
+        #result {
+            min-height: 300px;
+            white-space: pre-wrap;
+            line-height: 1.8;
+            padding: 15px;
+            background: #0f172a;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 16px;
+        }
+        .tip {
+            color: #94a3b8;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .status {
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        .status.success { color: #22c55e; }
+        .status.error { color: #ef4444; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>AI_NovelGenerator · 复刻版 V1.4.4</h1>
+
+    <!-- API设置 -->
+    <div class="card">
+        <div class="tip">🔧 DeepSeek API 配置（和原版软件完全兼容）</div>
+        <div class="row">
+            <input type="text" id="apiKey" placeholder="输入你的 DeepSeek API Key" style="flex: 2;">
+            <input type="text" id="apiUrl" value="https://api.deepseek.com/v1/chat/completions" style="flex: 3;" readonly>
+            <select id="model">
+                <option value="deepseek-chat" selected>deepseek-chat（小说专用）</option>
+                <option value="deepseek-reasoner">deepseek-reasoner（大纲设定）</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 人设/世界观锁定 -->
+    <div class="card">
+        <div class="tip">📌 人设/世界观锁定（防止AI写崩人设）</div>
+        <textarea id="characterSetting" placeholder="主角名：云墨；性格：隐忍、坚韧；功法：渊脉诀；世界观：武道界、退婚流、黑色戒指伏笔..."></textarea>
+    </div>
+
+    <!-- 续写区 -->
+    <div class="card">
+        <div class="tip">✍️ 输入当前剧情/续写指令，AI会自动承接前面所有内容</div>
+        <textarea id="prompt" placeholder="粘贴当前章节结尾，或输入续写要求..."></textarea>
+        <div class="row">
+            <select id="style">
+                <option value="玄幻爽文" selected>玄幻爽文</option>
+                <option value="仙侠古风">仙侠古风</option>
+                <option value="cold">冷笔白描</option>
+                <option value="都市玄幻">都市玄幻</option>
+            </select>
+            <input type="number" id="wordCount" value="2000" min="500" max="5000">
+            <span>字</span>
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-primary" onclick="generateNovel()">生成章节</button>
+            <button class="btn btn-secondary" onclick="saveAll()">保存进度</button>
+            <button class="btn btn-secondary" onclick="loadAll()">读取进度</button>
+            <button class="btn btn-danger" onclick="clearAll()">清空记忆</button>
+        </div>
+        <div class="status" id="status"></div>
+    </div>
+
+    <!-- 生成结果 -->
+    <div class="card">
+        <h3>生成内容</h3>
+        <div id="result"></div>
+    </div>
+</div>
+
+<script>
+// 核心配置：复刻原版长记忆逻辑，上限300万字
+const MAX_MEMORY = 3000000;
+let novelMemory = localStorage.getItem('novelMemoryV144') || '';
+
+// 风格提示词（复刻原版预设）
+const styleRules = {
+    '玄幻爽文': '节奏明快，冲突密集，主角逆袭爽点突出，结尾必须留下强烈的下一章钩子，避免拖沓描写。',
+    '仙侠古风': '文字凝练雅致，意境悠远，用词符合修仙古风语境，禁用现代词汇，侧重意境和世界观氛围营造。',
+    'cold': '冷笔白描风格，禁用所有情绪形容词和心理描写，只用客观陈述句叙述动作、场景和对话，不抒情、不评价。',
+    '都市玄幻': '结合现代都市生活与修行元素，场景真实自然，设定不违和，冲突逻辑合理，避免悬浮设定。'
+};
+
+// 生成小说核心逻辑（复刻原版续写流程）
+async function generateNovel() {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    const apiUrl = document.getElementById('apiUrl').value.trim();
+    const model = document.getElementById('model').value;
+    const character = document.getElementById('characterSetting').value.trim();
+    const prompt = document.getElementById('prompt').value.trim();
+    const style = document.getElementById('style').value;
+    const wordCount = parseInt(document.getElementById('wordCount').value) || 2000;
+    const resultDom = document.getElementById('result');
+    const statusDom = document.getElementById('status');
+
+    // 基础校验
+    if (!apiKey || !prompt) {
+        statusDom.className = 'status error';
+        statusDom.innerText = '❌ 请填写API Key和续写内容';
+        return;
+    }
+
+    statusDom.className = 'status';
+    statusDom.innerText = '⏳ 正在生成...';
+    resultDom.innerText = '';
+
+    // 构建提示词：复刻原版「人设+长记忆+续写指令」结构
+    const fullPrompt = buildFullPrompt(character, prompt, style, wordCount);
+
+    try {
+        // 调用DeepSeek API（和原版完全一致的请求格式）
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: model,
+                messages: [{ role: 'user', content: fullPrompt }],
+                max_tokens: Math.ceil(wordCount * 2),
+                temperature: 0.7,
+                stream: false
+            })
+        });
+
+        if (!response.ok) throw new Error(`请求失败：${response.status}`);
+
+        const data = await response.json();
+        const content = data.choices[0].message.content;
+
+        // 更新长记忆，自动控制上限
+        novelMemory += `\n\n--- 新章节 ---\n${content}`;
+        if (novelMemory.length > MAX_MEMORY) {
+            novelMemory = novelMemory.slice(-MAX_MEMORY);
+        }
+
+        // 显示结果
+        resultDom.innerText = content;
+        statusDom.className = 'status success';
+        statusDom.innerText = `✅ 生成完成，当前记忆字数：${novelMemory.length}`;
+
+    } catch (error) {
+        statusDom.className = 'status error';
+        statusDom.innerText = `❌ 生成失败：${error.message}`;
+    }
+}
+
+// 构建完整提示词（复刻原版记忆+人设+风格控制逻辑）
+function buildFullPrompt(character, prompt, style, wordCount) {
+    const styleRule = styleRules[style];
+    // 超长记忆处理：保留开头设定+关键剧情+最新章节
+    const memory = novelMemory.length > 50000
+        ? novelMemory.slice(0, 15000) + '\n...（中间剧情省略，已存入记忆库）...\n' + novelMemory.slice(-30000)
+        : novelMemory;
+
+    return `你正在续写一部长篇小说，必须严格遵守以下所有规则：
+1. 人设锁定：${character || '无特殊设定，保持正常网文风格'}
+2. 剧情承接：必须和已有的剧情记忆完全连贯，人设、世界观、伏笔不能出现矛盾
+3. 风格要求：${styleRule}
+4. 字数控制：约${wordCount}字，结尾必须留下下一章的钩子，方便续写
+5. 禁用模板化内容、重复句子，避免凑字数，保持剧情紧凑
+
+已有的剧情记忆（关键部分）：
+${memory}
+
+当前续写指令：
+${prompt}
+
+请直接输出小说正文，不要添加任何解释、说明、前缀或后缀。`;
+}
+
+// 保存进度（复刻原版存档功能）
+function saveAll() {
+    localStorage.setItem('novelMemoryV144', novelMemory);
+    localStorage.setItem('novelSetting', document.getElementById('characterSetting').value);
+    alert('✅ 进度已保存！人设和剧情记忆不会丢失');
+}
+
+// 读取进度（复刻原版读档功能）
+function loadAll() {
+    const savedMemory = localStorage.getItem('novelMemoryV144');
+    const savedSetting = localStorage.getItem('novelSetting');
+    if (savedMemory) {
+        novelMemory = savedMemory;
+        document.getElementById('characterSetting').value = savedSetting || '';
+        alert('✅ 进度已读取！');
+    } else {
+        alert('⚠️ 没有找到已保存的进度');
+    }
+}
+
+// 清空记忆（复刻原版重置功能）
+function clearAll() {
+    if (confirm('⚠️ 确定要清空全部剧情记忆吗？此操作不可恢复！')) {
+        novelMemory = '';
+        localStorage.removeItem('novelMemoryV144');
+        document.getElementById('result').innerText = '';
+        document.getElementById('status').innerText = '';
+        alert('✅ 记忆已清空，可重新开始');
+    }
+}
+
+// 页面加载时自动读取人设设定
+window.onload = function() {
+    const savedSetting = localStorage.getItem('novelSetting');
+    if (savedSetting) {
+        document.getElementById('characterSetting').value = savedSetting;
+    }
+};
+</script>
+</body>
+</html>
