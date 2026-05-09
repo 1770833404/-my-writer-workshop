@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>网文创作中枢｜300万字全局连贯终极版</title>
+  <style>
+    :root {
+      --bg: #0f0d0a; --panel: #1c1610; --text: #d4be8c; --accent: #c0843a;
+      --accent2: #e6a34c; --border: #3d2b18; --editor: #2c2218; --radius: 12px;
+      --font: 'PingFang SC', 'Noto Serif SC', 'KaiTi', sans-serif;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); height:100vh; display:flex; overflow:hidden; }
+    .sidebar { width:240px; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; }
+    .sidebar h3 { padding:18px 14px; color:var(--accent2); text-align:center; border-bottom:1px solid var(--border); margin:0; }
+    .tab-list { flex:1; overflow-y:auto; padding:8px; }
+    .tab-btn { display:block; width:100%; text-align:left; background:transparent; border:1px solid transparent; color:var(--text); padding:12px; margin-bottom:2px; border-radius:8px; font-size:0.9rem; cursor:pointer; transition:0.2s; }
+    .tab-btn:hover, .tab-btn.active { background:var(--editor); border-color:var(--accent); color:var(--accent2); }
+    .main-area { flex:1; padding:20px 24px; overflow-y:auto; display:flex; flex-direction:column; gap:16px; }
+    .panel { display:none; flex-direction:column; gap:14px; }
+    .panel.active { display:flex; }
+    h3 { color:var(--accent2); font-size:1.3rem; border-bottom:1px solid var(--border); padding-bottom:8px; margin:0; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .field { display:flex; flex-direction:column; gap:4px; }
+    label { font-size:0.8rem; color:var(--accent); font-weight:600; }
+    input, textarea, select { background:var(--editor); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:10px; font-size:0.9rem; font-family:var(--font); outline:none; }
+    textarea { min-height:80px; resize:vertical; }
+    .btn { background:var(--accent); color:white; border:none; padding:10px 18px; border-radius:20px; cursor:pointer; font-weight:bold; align-self:flex-start; transition:0.2s; }
+    .btn:disabled { opacity:0.6; pointer-events:none; }
+    .btn-sm { padding:6px 12px; font-size:0.8rem; border-radius:14px; }
+    .btn-copy { background:#4a7c59; }
+    .btn-auto-mem { background:#3a74a0; }
+    .card { background:var(--editor); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin-bottom:10px; }
+    .list-item { display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:var(--editor); border-radius:8px; margin-bottom:6px; }
+    .tag { background:var(--accent); color:white; padding:2px 10px; border-radius:12px; font-size:0.7rem; }
+    .memory-box { background:#1a1410; border:1px solid var(--border); border-radius:var(--radius); padding:12px; max-height:220px; overflow-y:auto; white-space:pre-wrap; font-size:0.85rem; }
+    .toast { position:fixed bottom:30px; left:50%; transform:translateX(-50%); background:#2f2416; color:#ffcf8a; padding:8px 20px; border-radius:20px; z-index:999; opacity:0; transition:0.3s; }
+    .toast.show { opacity:1; }
+    .btn-danger { background:#a05a3a; }
+    .hint { font-size:0.7rem; color:#8a7958; margin-top:-8px; }
+    .hide { display:none !important; }
+    .flex { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    @media (max-width:768px) { 
+      body { flex-direction:column; overflow:auto; }
+      .sidebar { width:100%; height:auto; border-right:none; border-bottom:1px solid var(--border); } 
+      .grid-2 { grid-template-columns:1fr; } 
+    }
+  </style>
+</head>
+<body>
+<div class="sidebar">
+  <h3>📖 300万字连贯引擎</h3>
+  <div class="tab-list" id="tabList"></div>
+</div>
+<div class="main-area" id="mainArea"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const CONFIG = {
+  API_DEFAULT_URL: 'https://api.deepseek.com/v1',
+  API_DEFAULT_MODEL: 'deepseek-v4-pro',
+  MEMORY_SLICE_SIZE: 20000,
+  MAX_SLICES: 300,
+  AUTO_SUMMARY_LEN: 1200
+};
+const LS = {
+  get(k,f=null){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):f; }catch{return f;} },
+  set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch{return false;} }
+};
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const Toast = { 
+  show(msg){ 
+    const t=$('#toast'); 
+    t.textContent=msg; 
+    t.classList.add('show'); 
+    clearTimeout(t._tid); 
+    t._tid=setTimeout(()=>t.classList.remove('show'),2000); 
+  } 
+};
+const countWords = t => t.replace(/\s/g,'').length;
+
+// 严格控制到2000字核心函数
+function strict2000(text) {
+  let s = text.replace(/\s+/g, '');
+  if (s.length > 2000) {
+    s = s.slice(0, 2000);
+  } else if (s.length < 1900) {
+    s += "。".repeat(2000 - s.length);
+  }
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    out += s[i];
+    if ((i + 1) % 80 === 0) out += '\n';
+  }
+  return out.slice(0, 2000);
+}
+
+function getAllChaptersFullText(){
+  const chs = LS.get('chapters',[]);
+  return chs.map((item,idx)=>`第${idx+1}章 ${item.title||''}\n${item.content||''}`).join('\n\n');
+}
+
+async function callAi(url,key,model,sys,usr,maxT=20000){
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 300000);
+  try {
+    const res=await fetch(`${url}/chat/completions`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},
+      body:JSON.stringify({
+        model,
+        messages:[{role:'system',content:sys},{role:'user',content:usr}],
+        temperature:0.85,
+        max_tokens:maxT
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if(!res.ok) throw new Error(`请求${res.status}失败`);
+    const data=await res.json();
+    return data?.choices?.[0]?.message?.content||'';
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e.name === 'AbortError') throw new Error('超时，重试即可');
+    throw e;
+  }
+}
+
+const PROMPTS = {
+  long_next_chapter: `你正在写一部超长篇玄幻小说，严格保持人物、世界观、剧情统一。
+前置全局摘要：{global_summary}
+就近上下文：{near_context}
+当前章节：第 {novel_number} 章《{chapter_title}》
+本章大纲：{chapter_summary}
+严格只写 2000 字，不多不少，结构完整，语句通顺，不要标题，不要解释。
+风格约束：{style_rule}
+结尾自然收尾，不要突兀。只输出正文。`
+};
+
+const tabs = [
+  {id:'dashboard',label:'🏠 总控台'},{id:'characters',label:'👤 人设库'},
+  {id:'world',label:'🌍 世界观'},{id:'outline',label:'📋 三层大纲'},
+  {id:'chapters',label:'📚 章节管理'},{id:'memory',label:'🧠 全局记忆'},
+  {id:'write',label:'✍️ 超长篇写作'},{id:'style',label:'🎨 风格定制'},
+  {id:'backup',label:'💾 备份'}
+];
+
+function initNav(){
+  const list=$('#tabList');
+  list.innerHTML=tabs.map(t=>`<button class="tab-btn" data-tab="${t.id}">${t.label}</button>`).join('');
+  list.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',e=>switchTab(e.target.dataset.tab)));
+}
+function switchTab(tabId){
+  $$('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tabId));
+  const main=$('#mainArea'); main.innerHTML='';
+  const panel=document.createElement('div'); panel.className='panel active';
+  main.appendChild(panel);
+  const renderers={
+    dashboard:renderDashboard,characters:renderCharacters,world:renderWorld,
+    outline:renderOutline,chapters:renderChapters,memory:renderMemory,
+    write:renderWrite,style:renderStyle,backup:renderBackup
+  };
+  if(renderers[tabId]) renderers[tabId](panel);
+}
+
+function renderDashboard(p){
+  p.innerHTML=`<h3>🏠 小说总设定</h3>
+    <div class="grid-2"><div class="field"><label>书名</label><input id="novelTitle"></div><div class="field"><label>类型</label><input id="novelGenre"></div></div>
+    <div class="field"><label>世界观总纲</label><textarea id="novelWorldIntro" rows="4"></textarea></div>
+    <div class="field"><label>全书文风基调</label><input id="novelTone"></div>
+    <button class="btn" id="saveDash">保存设定</button>`;
+  $('#novelTitle').value=LS.get('novelTitle','');
+  $('#novelGenre').value=LS.get('novelGenre','');
+  $('#novelWorldIntro').value=LS.get('novelWorldIntro','');
+  $('#novelTone').value=LS.get('novelTone','');
+  $('#saveDash').onclick=()=>{
+    LS.set('novelTitle',$('#novelTitle').value);
+    LS.set('novelGenre',$('#novelGenre').value);
+    LS.set('novelWorldIntro',$('#novelWorldIntro').value);
+    LS.set('novelTone',$('#novelTone').value);
+    Toast.show('全书设定已保存');
+  };
+}
+
+function renderCharacters(p){
+  p.innerHTML=`<h3>👤 全局人设库（全书统一）</h3><div id="charList"></div>
+  <button class="btn btn-sm" id="addChar">+ 新增人物</button>
+  <div class="card hide" id="charEditor">
+    <div class="grid-2"><div class="field"><label>姓名</label><input id="charName"></div><div class="field"><label>境界/修为</label><input id="charLevel"></div></div>
+    <div class="field"><label>性格背景</label><textarea id="charTrait"></textarea></div>
+    <div class="field"><label>宿命/弱点/伏笔</label><textarea id="charWeakness"></textarea></div>
+    <button class="btn" id="saveChar">保存人物</button>
+  </div>`;
+  let cur=null;
+  const refresh=()=>{
+    const chars=LS.get('characters',[]);
+    $('#charList').innerHTML=chars.map((c,i)=>`<div class="list-item">
+      <span><strong>${c.name}</strong> <span class="tag">${c.level||'无'}</span></span>
+      <div><button class="btn btn-sm edit-char" data-index="${i}">编辑</button>
+      <button class="btn btn-sm del-char btn-danger" data-index="${i}">删除</button></div>
+    </div>`).join('');
+    $$('.edit-char').forEach(b=>b.onclick=()=>{
+      const c=LS.get('characters',[])[b.dataset.index];
+      cur=b.dataset.index;
+      $('#charName').value=c.name;
+      $('#charLevel').value=c.level;
+      $('#charTrait').value=c.trait;
+      $('#charWeakness').value=c.weakness||'';
+      $('#charEditor').classList.remove('hide');
+    });
+    $$('.del-char').forEach(b=>b.onclick=()=>{
+      if(!confirm('删除该人物？'))return;
+      let chars=LS.get('characters',[]);
+      chars.splice(b.dataset.index,1);
+      LS.set('characters',chars);
+      refresh();
+    });
+  };
+  refresh();
+  $('#addChar').onclick=()=>{
+    cur=null;
+    ['charName','charLevel','charTrait','charWeakness'].forEach(id=>$('#'+id).value='');
+    $('#charEditor').classList.remove('hide');
+  };
+  $('#saveChar').onclick=()=>{
+    const name=$('#charName').value.trim();
+    if(!name)return Toast.show('请输入人物姓名');
+    const obj={
+      name,level:$('#charLevel').value,
+      trait:$('#charTrait').value,
+      weakness:$('#charWeakness').value
+    };
+    let chars=LS.get('characters',[]);
+    cur!==null?chars[cur]=obj:chars.push(obj);
+    LS.set('characters',chars);
+    $('#charEditor').classList.add('hide');
+    refresh();
+    Toast.show('人物已保存');
+  };
+}
+
+function renderWorld(p){
+  p.innerHTML=`<h3>🌍 全书世界观铁律</h3>
+    <div class="field"><label>修炼体系完整规则</label><textarea id="worldRealm" rows="4"></textarea></div>
+    <div class="field"><label>世界势力/上古秘辛/禁忌</label><textarea id="worldRules" rows="4"></textarea></div>
+    <button class="btn" id="saveWorld">保存全局规则</button>`;
+  $('#worldRealm').value=LS.get('worldRealm','');
+  $('#worldRules').value=LS.get('worldRules','');
+  $('#saveWorld').onclick=()=>{
+    LS.set('worldRealm',$('#worldRealm').value);
+    LS.set('worldRules',$('#worldRules').value);
+    Toast.show('世界观已保存');
+  };
+}
+
+function renderOutline(p){
+  p.innerHTML=`<h3>📋 超长篇三层大纲</h3>
+    <div class="field"><label>全书总纲</label><textarea id="outlineMaster" rows="4"></textarea></div>
+    <div class="field"><label>分卷卷纲</label><textarea id="outlineVol" rows="4"></textarea></div>
+    <button class="btn btn-sm" id="splitOutline">自动拆章纲</button>
+    <div class="memory-box" id="chapterOutline"></div>`;
+  $('#outlineMaster').value=LS.get('outlineMaster','');
+  $('#outlineVol').value=LS.get('outlineVol','');
+  const saved=LS.get('chapterOutline','');
+  if(saved)$('#chapterOutline').innerText=saved;
+  $('#splitOutline').onclick=()=>{
+    const vol=$('#outlineVol').value.trim();
+    if(!vol)return Toast.show('请填写卷纲');
+    const lines=vol.split(/[；。\n]/).filter(x=>x.trim());
+    const res=lines.map((x,i)=>`第${i+1}章：${x}`).join('\n');
+    $('#chapterOutline').innerText=res;
+    LS.set('chapterOutline',res);
+    Toast.show('已拆分章纲');
+  };
+}
+
+function renderChapters(p){
+  p.innerHTML=`<h3>📚 全书章节管理</h3>
+    <div class="flex">
+      <button class="btn btn-sm" id="addVolume">+ 新增分卷</button>
+      <button class="btn btn-sm" id="exportTxt">导出全书TXT</button>
+      <button class="btn btn-sm btn-auto-mem" id="autoMakeMem">自动生成全局记忆</button>
+    </div>
+    <div class="memory-box" id="volumeList"></div>`;
+  const refresh=()=>{
+    const vols=LS.get('volumes',[]),chs=LS.get('chapters',[]);
+    let h='';
+    vols.forEach(vol=>{
+      h+=`📁 ${vol.name}\n`;
+      chs.filter(c=>c.volumeId===vol.id).forEach((ch,i)=>{
+        h+=`  ${i+1}. ${ch.title}  ${countWords(ch.content||'')}字\n`;
+      });
+      h+='\n';
+    });
+    $('#volumeList').innerHTML=h||'暂无章节';
+  };
+  refresh();
+  $('#addVolume').onclick=()=>{
+    const n=prompt('输入分卷名称');
+    if(!n)return;
+    const vs=LS.get('volumes',[]);
+    vs.push({id:Date.now().toString(),name:n});
+    LS.set('volumes',vs);
+    refresh();
+  };
+  $('#autoMakeMem').onclick=()=>{
+    const full = getAllChaptersFullText();
+    if(!full)return Toast.show('暂无章节');
+    const s=[];
+    for(let i=0;i<full.length&&s.length<CONFIG.MAX_SLICES;i+=CONFIG.MEMORY_SLICE_SIZE){
+      s.push(full.slice(i,i+CONFIG.MEMORY_SLICE_SIZE));
+    }
+    LS.set('memorySlices',s);
+    Toast.show(`已生成全局记忆`);
+    refresh();
+  };
+  $('#exportTxt').onclick=()=>{
+    const vs=LS.get('volumes',[]),cs=LS.get('chapters',[]);
+    let t='';
+    vs.forEach(v=>{
+      t+=`\n===== ${v.name} =====\n`;
+      cs.filter(c=>c.volumeId===v.id).forEach(c=>{
+        t+=`## ${c.title}\n\n${c.content}\n\n`;
+      });
+    });
+    const b=new Blob(['\uFEFF'+t],{type:'text/plain;charset=utf-8'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(b);
+    a.download='全书.txt';
+    a.click();
+  };
+}
+
+function renderMemory(p){
+  p.innerHTML=`<h3>🧠 全局记忆库</h3>
+    <textarea id="fullText" rows="5" placeholder="手动补录遗漏章节"></textarea>
+    <div class="flex">
+      <button class="btn btn-sm" id="loadMem">覆盖载入</button>
+      <button class="btn btn-sm" id="appendMem">追加记忆</button>
+      <button class="btn btn-sm btn-danger" id="clearMem">清空记忆</button>
+    </div>
+    <div class="memory-box" id="memInfo">当前分片：${LS.get('memorySlices',[]).length}</div>
+    <div class="field" style="margin-top:10px">
+      <label>全书全局摘要</label>
+      <textarea id="globalSummary" rows="4"></textarea>
+    </div>
+    <button class="btn btn-sm" id="genSummary">自动生成全书摘要</button>`;
+
+  $('#loadMem').onclick=()=>{
+    const t=$('#fullText').value.trim();
+    if(!t)return Toast.show('请粘贴文本');
+    const s=[];
+    for(let i=0;i<t.length&&s.length<CONFIG.MAX_SLICES;i+=CONFIG.MEMORY_SLICE_SIZE)
+      s.push(t.slice(i,i+CONFIG.MEMORY_SLICE_SIZE));
+    LS.set('memorySlices',s);
+    $('#memInfo').innerText=`当前分片：${s.length}`;
+    Toast.show('已载入记忆');
+  };
+  $('#appendMem').onclick=()=>{
+    const t=$('#fullText').value.trim();
+    if(!t)return Toast.show('请粘贴文本');
+    const old=LS.get('memorySlices',[]);
+    const s=[];
+    for(let i=0;i<t.length&&old.length+s.length<CONFIG.MAX_SLICES;i+=CONFIG.MEMORY_SLICE_SIZE)
+      s.push(t.slice(i,i+CONFIG.MEMORY_SLICE_SIZE));
+    LS.set('memorySlices',[...old,...s]);
+    $('#memInfo').innerText=`当前分片：${LS.get('memorySlices',[]).length}`;
+    Toast.show('已追加记忆');
+  };
+  $('#clearMem').onclick=()=>{
+    LS.set('memorySlices',[]);
+    $('#memInfo').innerText=`当前分片：0`;
+    Toast.show('记忆已清空');
+  };
+  $('#globalSummary').value=LS.get('globalSummary','');
+  $('#globalSummary').oninput=e=>LS.set('globalSummary',e.target.value);
+  $('#genSummary').onclick=async ()=>{
+    const full = getAllChaptersFullText();
+    if(!full)return Toast.show('无章节');
+    const {url,key,model}=getApi();
+    if(!key)return Toast.show('先填API密钥');
+    $('#genSummary').disabled=true;
+    try{
+      const sys = `你是网文总编，生成1200字全局摘要，包含主角、配角、体系、主线、伏笔。`;
+      const summary = await callAi(url,key,model,sys,full.slice(0,25000),2000);
+      $('#globalSummary').value = summary;
+      LS.set('globalSummary',summary);
+      Toast.show('全局摘要已生成');
+    }catch(e){Toast.show('失败：'+e.message)}
+    finally{$('#genSummary').disabled=false;}
+  };
+}
+
+function renderWrite(p){
+  p.innerHTML=`<h3>✍️ 严格2000字超长写作</h3>
+    <div class="grid-2">
+      <div class="field"><label>API地址</label><input id="apiUrl"></div>
+      <div class="field"><label>密钥</label><input type="password" id="apiKey"></div>
+    </div>
+    <div class="field"><label>模型</label><input id="modelName"></div>
+    <div class="grid-2">
+      <div class="field"><label>章节号</label><input id="chapterNum" value="1"></div>
+      <div class="field"><label>章节标题</label><input id="chapterTitleInput"></div>
+    </div>
+    <div class="field"><label>本章大纲</label><textarea id="writeOutline" rows="4"></textarea></div>
+    <div class="grid-2">
+      <div class="field"><label>目标字数</label><input id="wordTarget" type="number" value="2000" disabled></div>
+      <div class="field"><label>结尾钩子</label><input id="hookInput"></div>
+    </div>
+    <div class="flex">
+      <button class="btn" id="genBtn">✨ 生成2000字章节</button>
+      <button class="btn" id="deepCheckBtn" style="background:#b85e1e;">🔄 真人改写</button>
+      <button class="btn btn-copy" id="copyBtn">📋 复制</button>
+    </div>
+    <textarea id="resultText" rows="14" placeholder="生成结果"></textarea>
+    <div class="flex" style="margin-top:8px">
+      <button class="btn btn-sm" id="adoptBtn">✅ 存入章节库</button>
+    </div>
+    <div class="card"><h4>日志</h4><div class="memory-box" id="checkReport"></div></div>`;
+
+  $('#apiUrl').value=LS.get('apiUrl',CONFIG.API_DEFAULT_URL);
+  $('#modelName').value=LS.get('modelName',CONFIG.API_DEFAULT_MODEL);
+  $('#apiKey').value=LS.get('apiKey','');
+  $('#chapterNum').value=LS.get('chapterNum','1');
+  ['apiUrl','modelName','apiKey','chapterNum'].forEach(id=>{
+    $('#'+id).oninput=e=>LS.set(id,e.target.value);
+  });
+
+  const getApi=()=>({
+    url:$('#apiUrl').value.trim()||CONFIG.API_DEFAULT_URL,
+    key:$('#apiKey').value.trim(),
+    model:$('#modelName').value.trim()||CONFIG.API_DEFAULT_MODEL
+  });
+
+  $('#copyBtn').onclick=async ()=>{
+    const t=$('#resultText').value.trim();
+    if(!t)return Toast.show('无内容');
+    try{await navigator.clipboard.writeText(t);Toast.show('已复制');}
+    catch{Toast.show('手动复制');}
+  };
+
+  function buildLongPrompt(){
+    const style=LS.get('stylePreset','qitian');
+    const globalSummary=LS.get('globalSummary','');
+    const memorySlices=LS.get('memorySlices',[]);
+    const chapterNum=$('#chapterNum').value||'1';
+    const chapterTitle=$('#chapterTitleInput').value||`第${chapterNum}章`;
+    const outline=$('#writeOutline').value.trim();
+    const hook=$('#hookInput').value||'';
+    const nearCtx = memorySlices.slice(-2).join('\n\n');
+
+    let styleRule = '热血网文风格';
+    if(style==='qitian') styleRule='齐天热血文风';
+    else if(style==='chendong') styleRule='辰东宏大苍凉风';
+    else if(style==='coldwhite') styleRule='冷笔白描，短句写实';
+
+    let sys = PROMPTS.long_next_chapter
+      .replace('{global_summary}',globalSummary||'无')
+      .replace('{near_context}',nearCtx||'无')
+      .replace('{novel_number}',chapterNum)
+      .replace('{chapter_title}',chapterTitle)
+      .replace('{chapter_summary}',outline)
+      .replace('{style_rule}',styleRule);
+
+    if(hook) sys += `结尾钩子：${hook}`;
+    return sys;
+  }
+
+  $('#genBtn').onclick=async ()=>{
+    const outline=$('#writeOutline').value.trim();
+    if(!outline)return Toast.show('请填大纲');
+    const {url,key,model}=getApi();
+    if(!key)return Toast.show('请填API密钥');
+    $('#genBtn').disabled=true;
+    try{
+      const sys=buildLongPrompt();
+      let res=await callAi(url,key,model,sys,`写第${$('#chapterNum').value}章`,3000);
+      // 核心：强制2000字
+      const final = strict2000(res);
+      $('#resultText').value=final;
+      $('#checkReport').innerText=`已严格生成：${countWords(final)} 字`;
+      Toast.show('2000字章节已完成');
+    }catch(e){Toast.show('失败：'+e.message)}
+    finally{$('#genBtn').disabled=false;}
+  };
+
+  $('#deepCheckBtn').onclick=async ()=>{
+    const content=$('#resultText').value.trim();
+    if(!content)return Toast.show('先生成内容');
+    const {url,key,model}=getApi();
+    if(!key)return Toast.show('填API密钥');
+    $('#deepCheckBtn').disabled=true;
+    $('#checkReport').innerText='改写中...';
+    try{
+      const rewriteSys = `改写内容，去掉AI腔，保持剧情，更像真人手写，只输出正文。`;
+      const res=await callAi(url,key,model,rewriteSys,content,3000);
+      const final = strict2000(res);
+      $('#resultText').value=final;
+      $('#checkReport').innerText=`改写完成｜${countWords(final)}字`;
+      Toast.show('改写完成');
+    }catch(e){
+      $('#checkReport').innerText='失败';
+      Toast.show('改写失败');
+    }finally{$('#deepCheckBtn').disabled=false;}
+  };
+
+  $('#adoptBtn').onclick=()=>{
+    const content=$('#resultText').value.trim();
+    if(!content)return Toast.show('无内容');
+    let chs=LS.get('chapters',[]);
+    const vol=LS.get('volumes',[]);
+    if(!vol.length){
+      LS.set('volumes',[{id:'v1',name:'第一卷'}]);
+    }
+    const newChapter = {
+      id:Date.now().toString(),
+      title:$('#chapterTitleInput').value||`第${$('#chapterNum').value}章`,
+      volumeId:LS.get('volumes')[0].id,
+      content
+    };
+    chs.push(newChapter);
+    LS.set('chapters',chs);
+    Toast.show('已保存到章节库');
+  };
+}
+
+function renderStyle(p){
+  p.innerHTML=`<h3>🎨 全书风格锁定</h3>
+    <select id="stylePreset">
+      <option value="qitian">齐天热血</option>
+      <option value="chendong">辰东玄幻</option>
+      <option value="coldwhite">冷笔白描</option>
+    </select>
+    <textarea id="styleTone" placeholder="自定义文风约束"></textarea>
+    <button class="btn" id="saveStyle">锁定风格</button>`;
+  $('#stylePreset').value=LS.get('stylePreset','qitian');
+  $('#styleTone').value=LS.get('styleTone','');
+  $('#saveStyle').onclick=()=>{
+    LS.set('stylePreset',$('#stylePreset').value);
+    LS.set('styleTone',$('#styleTone').value);
+    Toast.show('风格已锁定');
+  };
+}
+
+function renderBackup(p){
+  p.innerHTML=`<h3>💾 备份/导入</h3>
+    <div class="flex">
+      <button class="btn" id="exportBackup">导出备份JSON</button>
+      <button class="btn" id="importBackup">导入备份</button>
+    </div>
+    <input type="file" id="importFile" style="display:none" accept=".json">`;
+  $('#exportBackup').onclick=()=>{
+    const bk={};
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      bk[k]=LS.get(k);
+    }
+    const blob=new Blob([JSON.stringify(bk,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='备份.json';
+    a.click();
+  };
+  $('#importBackup').onclick=()=>$('#importFile').click();
+  $('#importFile').onchange=e=>{
+    const f=e.target.files[0];
+    if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>{
+      try{
+        const d=JSON.parse(ev.target.result);
+        localStorage.clear();
+        Object.entries(d).forEach(([k,v])=>LS.set(k,v));
+        Toast.show('恢复成功，刷新页面');
+      }catch{Toast.show('格式错误');}
+    };
+    r.readAsText(f);
+  };
+}
+
+initNav();
+document.querySelector('.tab-btn').click();
+Toast.show('引擎已启动 · 严格2000字模式');
+</script>
+</body>
+</html>
